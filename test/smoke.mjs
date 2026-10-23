@@ -10,6 +10,7 @@ import { buildRunPrompt, buildInstallPrompt, buildReportPrompt } from '../lib/pr
 import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } from '../lib/report.mjs';
 import { queryTasks, taskStatus, refreshTaskInfo, readTaskDefinition, computeNextRun } from '../lib/tasks.mjs';
 import { guardScriptPath, guardStatus } from '../lib/runner.mjs';
+import { resolveBettergiMcp, vendorPath } from '../lib/bettergi-mcp.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -149,6 +150,29 @@ Promise.resolve()
       const row = taskStatus('BetterGI 日常一条龙');
       if (row.exists && !row.nextRunTime && !row.lastRunTime) throw new Error('刷新后仍无下次/上次运行时间');
       return `next=${row.nextRunTime || '-'} last=${row.lastRunTime || '-'}`;
+    });
+    check('bettergi-mcp resolver', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-bgmcp-'));
+      const vendor = vendorPath(tmp);
+      if (!vendor.endsWith(path.join('vendor', 'bettergi-mcp', 'bettergi-mcp.mjs'))) throw new Error(`vendor 路径异常：${vendor}`);
+      fs.mkdirSync(path.dirname(vendor), { recursive: true });
+      fs.writeFileSync(vendor, '// smoke placeholder\n', 'utf8');
+      const savedEnv = process.env.DSH_GAME_DAILY_BETTERGI_MCP;
+      delete process.env.DSH_GAME_DAILY_BETTERGI_MCP;
+      try {
+        const hit = resolveBettergiMcp({ stateDir: tmp });
+        if (hit !== vendor) throw new Error(`应命中 vendor，实际：${hit}`);
+        const standalone = path.join(tmp, 'standalone.mjs');
+        fs.writeFileSync(standalone, '// env placeholder\n', 'utf8');
+        process.env.DSH_GAME_DAILY_BETTERGI_MCP = standalone;
+        const fromEnv = resolveBettergiMcp({ stateDir: tmp });
+        if (fromEnv !== standalone) throw new Error(`env 应优先，实际：${fromEnv}`);
+      } finally {
+        if (savedEnv === undefined) delete process.env.DSH_GAME_DAILY_BETTERGI_MCP;
+        else process.env.DSH_GAME_DAILY_BETTERGI_MCP = savedEnv;
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+      return 'vendor 优先 / env 覆盖 ok';
     });
     for (const item of results) console.log(`${item.ok ? 'PASS' : 'FAIL'}  ${item.name}  ${item.detail}`);
     exitCode = results.some((item) => !item.ok) ? 1 : 0;

@@ -102,12 +102,27 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | `DSH_GAME_DAILY_DEV` | — | `1` = 开发隔离：状态目录加 `/dev`、任务前缀 `game-daily-dev-` |
 | `DSH_GAME_DAILY_STATE_DIR` | `$DSH_HOME/game-daily` | 覆盖状态目录 |
 | `DSH_GAME_DAILY_TASK_PREFIX` | `game-daily-` | 覆盖计划任务名前缀 |
-| `DSH_GAME_DAILY_BETTERGI_MCP` | 插件同级 `dsh-betterGI/tools/bettergi-mcp/bettergi-mcp.mjs` | bettergi MCP 服务器脚本路径 |
+| `DSH_GAME_DAILY_BETTERGI_MCP` | 自动解析（见下） | bettergi MCP 服务器脚本的显式路径（优先级最高） |
 | `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI 安装位置（体检用） |
+
+## bettergi-mcp 从哪来
+
+原神的 `bgi_*` 工具由独立仓库 [`gychen-NJU/bettergi-mcp`](https://github.com/gychen-NJU/bettergi-mcp) 提供（单文件、零依赖的 MCP 服务器）。插件**不捆绑**它，按以下顺序解析：
+
+1. 环境变量 `DSH_GAME_DAILY_BETTERGI_MCP` 指向的脚本；
+2. 插件状态目录下的下载副本：`$DSH_HOME/game-daily/vendor/bettergi-mcp/bettergi-mcp.mjs`；
+3. 与本插件同级的 `dsh-betterGI/tools/bettergi-mcp/bettergi-mcp.mjs`（开发者本机布局）。
+
+体检发现没有脚本时，面板给出「下载 bettergi-mcp（从 GitHub）」按钮，点一下就把单文件下载到 (2)；启用原神的排班并点「保存并应用」时也会顺手补齐。要自己 clone 也可以：
+
+```powershell
+git clone https://github.com/gychen-NJU/bettergi-mcp
+# 然后设置 DSH_GAME_DAILY_BETTERGI_MCP=<clone 目录>\bettergi-mcp.mjs
+```
 
 ## 依赖与边界
 
-- 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ 本机已注册的 `bettergi` MCP；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
+- 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ bettergi-mcp（见上）；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
 - 崩坏3 / 星铁：`game-daily` 家族技能 + 提权助手（坐标点击被拦时按技能说明改用 computer-use）。
 - 没有「后台挂机」：原神必须可见且前台、16:9 ≥1920×1080；锁屏会失败。
 - 注册计划任务、跑 BetterGI 需要一次 UAC；面板会在按钮旁说明。

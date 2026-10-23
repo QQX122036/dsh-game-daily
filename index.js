@@ -23,6 +23,7 @@ import { listRuns, readReport, metaPathOf, readJsonSafe } from './lib/report.mjs
 import { buildInstallPrompt, buildReportPrompt } from './lib/prompt.mjs';
 import { openSession } from './lib/install.mjs';
 import { notify } from './lib/notify.mjs';
+import { resolveBettergiMcp, fetchBettergiMcp } from './lib/bettergi-mcp.mjs';
 
 export const name = 'game-daily';
 export const inject = ['webServer'];
@@ -332,7 +333,7 @@ export function apply(ctx) {
       await ready;
       const raw = String(url.searchParams.get('games') || '').trim();
       const ids = raw ? raw.split(',').map((x) => x.trim()).filter((id) => GAME_IDS.includes(id)) : GAME_IDS;
-      const probe = probeDependencies(ids.length ? ids : GAME_IDS);
+      const probe = probeDependencies(ids.length ? ids : GAME_IDS, { stateDir: env.stateDir });
       return { ok: true, ...probe, games: ids, tasks: tasksView() };
     },
 
@@ -375,6 +376,16 @@ export function apply(ctx) {
         skillsRoot: env.skillsRoot,
       });
       const started = startRegistration({ stateDir: env.stateDir, dryRun: body.dryRun === true });
+      // 原神启用时顺手补齐 bettergi-mcp（单文件，从独立仓库下载）；失败不阻断排班。
+      let bettergiMcp = null;
+      if (store.get().games.genshin?.enabled && !resolveBettergiMcp({ stateDir: env.stateDir })) {
+        bettergiMcp = await fetchBettergiMcp({ stateDir: env.stateDir });
+        if (bettergiMcp.ok) {
+          store.mutate((state) => {
+            state.deps = { ...(state.deps || {}), bettergiMcpPath: bettergiMcp.path };
+          });
+        }
+      }
       return {
         ok: started.ok !== false,
         applied: Object.keys(patch),
@@ -382,10 +393,11 @@ export function apply(ctx) {
         tasksConfig: configPath,
         scriptSync,
         registration: started,
+        bettergiMcp,
         note: body.dryRun === true
           ? '已写入排班并做了注册预演（未真正创建计划任务）。'
           : started.ok
-            ? '已写入排班并开始注册计划任务；需要管理员权限时会弹一次 UAC，稍后刷新看结果。'
+            ? `已写入排班并开始注册计划任务；需要管理员权限时会弹一次 UAC，稍后刷新看结果。${bettergiMcp && bettergiMcp.ok ? ' 已顺带下载 bettergi-mcp。' : ''}`
             : started.error,
       };
     },
@@ -448,6 +460,12 @@ export function apply(ctx) {
     'POST /install': async (req) => {
       await ready;
       const body = await readBody(req);
+      // 纯下载类动作不需要开会话：直接从 GitHub 取单文件服务器。
+      if (body.action === 'install-bettergi-mcp') {
+        const fetched = await fetchBettergiMcp({ stateDir: env.stateDir });
+        if (fetched.ok) store.mutate((state) => { state.deps = { ...(state.deps || {}), bettergiMcpPath: fetched.path }; });
+        return { ok: fetched.ok === true, action: body.action, ...fetched };
+      }
       const gameId = GAME_IDS.includes(body.game) ? body.game : '';
       const prompt = body.prompt || buildInstallPrompt({
         action: body.action || '',

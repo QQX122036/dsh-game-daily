@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
         close: '关闭',
         fix: '让 DSH 修这个',
         fixed: '已打开修复会话，回到这里点「重新体检」。',
+        bettergiMcpDownloaded: 'bettergi-mcp 已下载到插件的 vendor 目录。',
         applied: '已保存并提交注册；弹 UAC 时请点允许。',
         saved: '已保存',
         dirty: '有改动，待应用',
@@ -109,6 +110,7 @@ window.__ModuleLoader__.load({
         close: 'Close',
         fix: 'Let DSH fix it',
         fixed: 'Fix session opened. Come back and re-check.',
+        bettergiMcpDownloaded: 'bettergi-mcp downloaded into the plugin vendor directory.',
         applied: 'Saved and registration started; approve the UAC prompt if shown.',
         saved: 'Saved',
         dirty: 'Unsaved changes',
@@ -668,6 +670,11 @@ window.__ModuleLoader__.load({
             } catch {
               /* 打不开就只提示 */
             }
+          }
+          if (value.ok === true && !value.sessionId && value.action === 'install-bettergi-mcp') {
+            setMessage(`${t('bettergiMcpDownloaded')}${value.bytes ? ` (${Math.round(value.bytes / 1024)} KB)` : ''}`);
+            await load(true);
+            return;
           }
           setMessage(`${t('fixed')}${value.sessionId ? ` (session ${value.sessionId.slice(0, 8)}…)` : ''}`);
         } catch (err) {

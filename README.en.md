@@ -102,12 +102,27 @@ Settings panel ──POST /api/game-daily/apply──▶ state.json + automation
 | `DSH_GAME_DAILY_DEV` | — | `1` = dev isolation: state dir gains `/dev`, task prefix `game-daily-dev-` |
 | `DSH_GAME_DAILY_STATE_DIR` | `$DSH_HOME/game-daily` | Override the state directory |
 | `DSH_GAME_DAILY_TASK_PREFIX` | `game-daily-` | Override the scheduled-task name prefix |
-| `DSH_GAME_DAILY_BETTERGI_MCP` | sibling `dsh-betterGI/tools/bettergi-mcp/bettergi-mcp.mjs` | bettergi MCP server script path |
+| `DSH_GAME_DAILY_BETTERGI_MCP` | auto-resolved (see below) | Explicit path to the bettergi MCP server script (highest priority) |
 | `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI install path (used by the dependency check) |
+
+## Where bettergi-mcp comes from
+
+The Genshin `bgi_*` tools are served by a separate repository, [`gychen-NJU/bettergi-mcp`](https://github.com/gychen-NJU/bettergi-mcp) — a single-file, dependency-free MCP server. This plugin does **not** bundle it; resolution order:
+
+1. the script pointed to by `DSH_GAME_DAILY_BETTERGI_MCP`;
+2. the downloaded copy at `$DSH_HOME/game-daily/vendor/bettergi-mcp/bettergi-mcp.mjs`;
+3. `dsh-betterGI/tools/bettergi-mcp/bettergi-mcp.mjs` next to this plugin (a developer machine layout).
+
+When the dependency check finds nothing, the panel shows a **Download bettergi-mcp (from GitHub)** button that fetches the single file into (2). Enabling the Genshin schedule and pressing **Save & apply** also fills it in. Cloning it yourself works too:
+
+```powershell
+git clone https://github.com/gychen-NJU/bettergi-mcp
+# then set DSH_GAME_DAILY_BETTERGI_MCP=<clone dir>\bettergi-mcp.mjs
+```
 
 ## Dependencies and boundaries
 
-- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + a registered `bettergi` MCP. BetterGI has no HTTP API — it can only be driven by command line / script groups.
+- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.
 - HI / SR: the `game-daily` skill family + the elevation helper (switch to computer-use per the skill docs when synthetic clicks are filtered).
 - There is **no background/AFK mode**: Genshin must be visible and in the foreground at 16:9 ≥ 1920×1080; a locked screen will fail.
 - Registering scheduled tasks and running BetterGI require one UAC confirmation; the panel says so next to the button.

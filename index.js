@@ -24,6 +24,7 @@ import { buildInstallPrompt, buildReportPrompt } from './lib/prompt.mjs';
 import { openSession } from './lib/install.mjs';
 import { notify } from './lib/notify.mjs';
 import { resolveBettergiMcp, fetchBettergiMcp } from './lib/bettergi-mcp.mjs';
+import { resolveNodeExe } from './lib/nodeexe.mjs';
 
 export const name = 'game-daily';
 export const inject = ['webServer'];
@@ -130,6 +131,7 @@ function tasksConfigGames(store, env) {
       title: game.title,
       taskName,
       enabled: settings.enabled === true,
+      mode: settings.mode === 'dry' ? 'dry' : 'real',
       schedule: settings.schedule,
       timeoutMin: settings.timeoutMin,
     };
@@ -371,7 +373,7 @@ export function apply(ctx) {
         games,
         runnerScript: path.join(PLUGIN_ROOT, 'automation', 'run-headless.mjs'),
         scriptPath: registerScriptPath(env.stateDir),
-        nodeExe: process.execPath,
+        nodeExe: resolveNodeExe(),
         profile: env.headlessProfile,
         skillsRoot: env.skillsRoot,
       });

@@ -11,6 +11,7 @@ import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } fr
 import { queryTasks, taskStatus, refreshTaskInfo, readTaskDefinition, computeNextRun } from '../lib/tasks.mjs';
 import { guardScriptPath, guardStatus } from '../lib/runner.mjs';
 import { resolveBettergiMcp, vendorPath } from '../lib/bettergi-mcp.mjs';
+import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -144,6 +145,21 @@ Promise.resolve()
       const state = guardStatus('genshin');
       if (state.running) throw new Error('冒烟测试期间不该有守护进程');
       return 'keep-foreground.ps1 就绪（BOM ok）';
+    });
+    check('game process helpers', () => {
+      const keys = Object.keys(GAME_PROCESSES);
+      if (keys.length !== 4) throw new Error(`进程映射应为 4 个游戏：${keys.join(',')}`);
+      const running = runningGames();
+      for (const id of keys) {
+        if (typeof running[id] !== 'boolean') throw new Error(`runningGames().${id} 不是布尔`);
+      }
+      // 只对「确认没在运行」的游戏做一次空关闭，验证 taskkill 的成功判定逻辑。
+      if (running.zzz === false) {
+        const closed = closeGame('zzz');
+        if (!closed || closed.ok !== true) throw new Error(`closeGame 空调用应成功：${JSON.stringify(closed)}`);
+        if (Array.isArray(closed.closed) && closed.closed.length) throw new Error('没运行却报告关掉了进程');
+      }
+      return keys.map((id) => `${id}:${running[id] ? 'running' : 'idle'}`).join(' ');
     });
     check('task info refresh', () => {
       if (refreshed !== true) return '未刷新（无任务或 PowerShell 不可用，容忍）';

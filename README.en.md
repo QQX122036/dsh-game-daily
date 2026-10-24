@@ -69,6 +69,7 @@ Settings panel ──POST /api/game-daily/apply──▶ state.json + automation
 - On the headless side, `--patch` layers an overlay that injects the bettergi MCP (needed by Genshin), and `DSH_PERMISSION_MODE=danger-full-access` makes the run unattended. HI/SR use the elevation helper (`scripts/run-step.mjs --ps`) when computer-use is unavailable.
 - The report is the only source of truth: `report.json`'s `status` is `success / partial / failed`; the plugin never guesses from process exit codes.
 - **Foreground guard**: each run starts a 1-second-poll guard process from `automation/keep-foreground.ps1`. If the game window loses foreground, it is pulled back immediately (four levels of fallback: `SetForegroundWindow` → `AttachThreadInput` → simulated Alt → `SwitchToThisWindow`). It exits when the run ends/stops via a `.stop` file; logs go to `<stateDir>/automation/guard-<game>.log`. There is a **Foreground guard** toggle in the schedule card (`ui.foregroundGuard`, on by default).
+- **Process cleanup (real mode)**: when a run finishes, the plugin closes that game's process (for Genshin it also closes `BetterGI.exe`) to save background resources. Before a new run starts it closes any other game process (`taskkill /T /F`); if the previous run is still active, the scheduled run waits for it to finish (up to 20 minutes by default, tunable via `DSH_GAME_DAILY_WAIT_MS`) instead of fighting over the game window. Dry mode never touches processes.
 
 ## HTTP API (host side, prefix `/api/game-daily`)
 

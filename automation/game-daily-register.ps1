@@ -122,7 +122,10 @@ foreach ($game in $games) {
       $entry.action = 'daily'
     }
 
+    # Guard: a desktop host may report its own Electron exe as process.execPath.
+    # Registering that would silently launch a second host instance that exits at once.
     $nodeExe = [string]$cfg.nodeExe
+    if ($nodeExe -and ([IO.Path]::GetFileName($nodeExe) -notmatch '^(node|node\.exe)$')) { $nodeExe = '' }
     if (-not $nodeExe) { $nodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source }
     $runner = [string]$cfg.runnerScript
     if (-not $nodeExe) { throw 'node.exe not found' }

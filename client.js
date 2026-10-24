@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({
         weekdaysCustom: '指定星期',
         catchUp: '错过补跑（开机后补一次）',
         foregroundGuard: '前台守护（游戏被抢走时自动拉回）',
+        autoExitNote: '真实模式：本轮结束后自动关闭游戏；下一款开始前会先确保上一款已经退出。',
         timeout: '超时（分钟）',
         gamePath: '游戏路径（可选）',
         saveApply: '保存并应用',
@@ -91,6 +92,7 @@ window.__ModuleLoader__.load({
         weekdaysCustom: 'Selected days',
         catchUp: 'Catch up after boot',
         foregroundGuard: 'Foreground guard (pull the game back)',
+        autoExitNote: 'Real mode: the game is closed after each run, and the previous game is closed before the next one starts.',
         timeout: 'Timeout (min)',
         gamePath: 'Game path (optional)',
         saveApply: 'Save & apply',
@@ -420,6 +422,7 @@ window.__ModuleLoader__.load({
                   }
                 },
               }),
+              h('p', { className: 'gd-hint' }, t('autoExitNote')),
               h('div', { className: 'gd-field' }, h('label', null, t('gamePath')),
                 h('input', {
                   className: 'gd-input',

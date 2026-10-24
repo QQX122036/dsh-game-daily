@@ -69,7 +69,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 - headless 侧通过 `--patch` 叠加 overlay 注入 bettergi MCP（原神需要），并带 `DSH_PERMISSION_MODE=danger-full-access` 实现无人值守；崩3/星铁没有 wincu 时按技能说明用提权助手（`scripts/run-step.mjs --ps`）。
 - 报告是唯一判定依据：`report.json` 的 `status` 为 `success / partial / failed`；插件只认这个文件，不猜进程退出码。
 - **前台守护**：每轮运行开始时，插件从 `automation/keep-foreground.ps1` 起一个 1 秒轮询的守护进程，游戏窗口被别的窗口抢走时立即拉回（四级回退：`SetForegroundWindow` → AttachThreadInput → 模拟 Alt → `SwitchToThisWindow`），结束/停止时写 `.stop` 自动退出；日志在 `<stateDir>/automation/guard-<game>.log`。面板排班卡里有「前台守护」开关（`ui.foregroundGuard`，默认开）。
-- **进程收尾（真实模式）**：一轮跑完会关掉该游戏的进程（原神连同 `BetterGI.exe`），减少后台占用；开始新一轮前会先关掉其它游戏（`taskkill /T /F`），若上一轮还在跑，计划任务会等它收尾（默认最多 20 分钟，`DSH_GAME_DAILY_WAIT_MS` 可调）而不是两边互相抢窗口。演练模式不动任何进程。
+- **进程收尾（真实模式）**：一轮跑完会关掉该游戏的进程（原神连同 `BetterGI.exe`），减少后台占用；开始新一轮前会先关掉其它游戏（`Get-Process` + `Stop-Process -Force`），若上一轮还在跑，计划任务会等它收尾（默认最多 20 分钟，`DSH_GAME_DAILY_WAIT_MS` 可调）而不是两边互相抢窗口。演练模式不动任何进程。
 
 ## HTTP 接口（Host 侧，前缀 `/api/game-daily`）
 

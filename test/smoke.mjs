@@ -1,4 +1,4 @@
-// 冒烟测试：不碰游戏、不建计划任务，只验证模块能加载、纯函数与读操作正常。
+﻿// 冒烟测试：不碰游戏、不建计划任务，只验证模块能加载、纯函数与读操作正常。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -296,7 +296,16 @@ Promise.resolve()
         fs.rmSync(tmp, { recursive: true, force: true });
       }
     });
-    check('bettergi-mcp bundled', () => {
+    check('manifest has no BOM', () => {
+      // PowerShell 的 Set-Content -Encoding UTF8 会写 BOM；DSH 用 JSON.parse 读 bundle 清单，
+      // 带 BOM 会让 bundle 变成 availability=missing、整插件不加载（设置页条目消失）。
+      const file = new URL('../package.json', import.meta.url);
+      const bytes = fs.readFileSync(file);
+      if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) throw new Error('package.json 带 UTF-8 BOM，DSH 会拒绝加载');
+      const manifest = JSON.parse(bytes.toString('utf8'));
+      if (!manifest?.dsh?.bundle?.patch) throw new Error('package.json 缺 dsh.bundle.patch');
+      return 'no BOM, bundle patch ' + manifest.dsh.bundle.patch;
+    });    check('bettergi-mcp bundled', () => {
       const file = bundledPath();
       if (!fs.existsSync(file)) throw new Error(`插件没自带 bettergi-mcp：${file}`);
       const size = fs.statSync(file).size;

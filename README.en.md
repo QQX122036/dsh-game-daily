@@ -34,7 +34,7 @@ The agent will clone, install the bundle, verify activation, and use the built-i
 
 ## What the panel does
 
-- **Game tabs**: Genshin Impact / Honkai Impact 3rd / Honkai: Star Rail / Zenless Zone Zero (paused, placeholder only).
+- **Game tabs**: Genshin Impact / Honkai Impact 3rd / Honkai: Star Rail / Zenless Zone Zero (driven by ZenlessZoneZero-OneDragon).
 - **Daily-agent switch (off by default)**: schedule and run settings appear only after you turn it on. Edits stay in a local draft; nothing is written and no task is (re)created until you press **Save & Apply**.
 - **Schedule**: daily time, run days (every day / specific weekdays), timeout, mode (real run / dry-run diagnosis only), catch-up on missed runs, open a report session after each run, game path (Genshin can point at `BetterGI.exe`). Timeout means how long one run may take (5–180 min; defaults: Genshin 150, HI3/Star Rail 45). The scheduler's execution time limit is set to timeout + 10 min, and the watchdog spends the 5-minute margin on finalizing the run itself.
 - **Dependency check**: dsh CLI, DSH version, headless runner (including the credentials patch), computer-use plugin, skill files, coordinate calibration, elevation helper, BetterGI, the bettergi-control skill, the bettergi-mcp script, and the bettergi MCP registration. Every missing item gets a **"Let DSH fix it"** button: one-click items (download bettergi-mcp, install bettergi-control, register the MCP row) run directly and the button turns into **Working…**; multi-step or privileged repairs open a new DSH session with the repair steps (including backup/read-back requirements) and switch the UI to it.
@@ -139,9 +139,17 @@ git clone https://github.com/gychen-NJU/bettergi-control "$env:USERPROFILE\.agen
 
 The skill directory can be overridden with `DSH_SKILLS_ROOT`.
 
+## Where Zenless Zone Zero comes from (OneDragon)
+
+All screen recognition and clicking for ZZZ is delegated to [ZenlessZoneZero-OneDragon](https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon) ("one-dragon"). It runs a local HTTP backend (default `http://127.0.0.1:23001`). The plugin bundles a **zero-dependency MCP server** at `tools/zzz-od-mcp/zzz-od-mcp.mjs` that wraps that backend into agent tools (`mcp__zzz-od__*`, 12 of them: health/status/window/applications/operations/enter/run_one_dragon/run_app/wait/stop/close_game/server).
+
+- **Ships with the plugin**: the MCP server, `automation/zzz-server.ps1` (elevated start/stop of the backend) and `skills/zzz-od-control/SKILL.md` are all inside the package — nothing is fetched from another repository.
+- **OneDragon itself is still external**: it is a large Python app (OCR resources included). The plugin only checks for `.venv\Scripts\python.exe` and `src\zzz_od` under `D:\software\ZenlessZoneZero-OneDragon` (override with `DSH_GAME_DAILY_ZZZ_ROOT`).
+- **Privileges**: ZZZ runs elevated, so switching its window / sending input needs an **elevated backend**. When the dependency check finds it down, it offers **Start OneDragon backend (one UAC)**; the runner also tries to start it before a real run.
+- **Flow**: `zzz_health → zzz_window → (zzz_enter if the window is not ready) → zzz_run_one_dragon → zzz_wait in a loop → zzz_status`; after the run the plugin closes the game and stops the backend. Known trap: running one-dragon while the game sits on the title screen makes the first app (mail) fail with "cannot recognise the screen", so `zzz_enter` first.
 ## Dependencies and boundaries
 
-- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + the bettergi-control skill + bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.
+- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + the bettergi-control skill + bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.`n- Zenless Zone Zero: ZenlessZoneZero-OneDragon (default `D:\software\ZenlessZoneZero-OneDragon`) + an elevated one-dragon backend. The MCP server and skill ship with this plugin; the OneDragon app itself still has to be installed separately.
 - HI / SR: the `game-daily` skill family + the elevation helper (switch to computer-use per the skill docs when synthetic clicks are filtered).
 - There is **no background/AFK mode**: Genshin must be visible and in the foreground at 16:9 ≥ 1920×1080; a locked screen will fail.
 - Registering scheduled tasks and running BetterGI require one UAC confirmation; the panel says so next to the button.

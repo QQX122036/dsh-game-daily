@@ -61,7 +61,7 @@ async function main() {
   const gameState = pluginState.games && pluginState.games[args.game] ? pluginState.games[args.game] : {};
   const timeoutMin = Number.isFinite(Number(gameState.timeoutMin)) ? Number(gameState.timeoutMin) : args.timeoutMin;
   log(stateDir, `foreground guard=${guard ? 'on' : 'off'} timeoutMin=${timeoutMin}`);
-  const started = startRun({
+  const started = await startRun({
     gameId: args.game,
     mode: args.mode,
     stateDir,

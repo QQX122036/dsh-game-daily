@@ -27,6 +27,7 @@ import { resolveBettergiMcp, fetchBettergiMcp } from './lib/bettergi-mcp.mjs';
 import { installSkill } from './lib/skills.mjs';
 import { registerBettergiMcp } from './lib/mcp-register.mjs';
 import { resolveNodeExe } from './lib/nodeexe.mjs';
+import { ensureZzzServer } from './lib/zzz.mjs';
 
 export const name = 'game-daily';
 export const inject = ['webServer'];
@@ -462,7 +463,7 @@ export function apply(ctx) {
       if (!game.canRun) return { ok: false, error: `${game.title} 目前不支持自动代理` };
       const settings = store.get().games[gameId];
       const mode = body.mode === 'dry' || body.mode === 'real' ? body.mode : settings.mode;
-      const started = startRun({
+      const started = await startRun({
         gameId,
         mode,
         stateDir: env.stateDir,
@@ -510,6 +511,17 @@ export function apply(ctx) {
           note: installed.ok
             ? `bettergi-control 已安装到 ${installed.path}${installed.scripts ? `（${installed.scripts} 个脚本）` : ''}。`
             : installed.error,
+        };
+      }
+      if (body.action === 'start-zzz-server') {
+        const result = await ensureZzzServer({ timeoutSeconds: 45 });
+        return {
+          ok: result.ok === true,
+          action: body.action,
+          server: result,
+          note: result.ok
+            ? `一条龙后端已就绪（${result.alreadyRunning ? '本来就在跑' : '刚刚启动'}）`
+            : `启动一条龙后端失败：${result.error || (result.script && result.script.error) || '未知原因'}`,
         };
       }
       if (body.action === 'install-bettergi-mcp' || body.action === 'fix-bettergi-mcp') {

@@ -34,10 +34,10 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 
 ## 面板里能做什么
 
-- **顶部游戏页签**：原神 / 崩坏3 / 崩坏：星穹铁道 / 绝区零（后者暂停，仅占位说明）。
+- **顶部游戏页签**：原神 / 崩坏3 / 崩坏：星穹铁道 / 绝区零（走 ZenlessZoneZero-OneDragon「一条龙」）。
 - **代理日常开关（默认关）**：打开后才出现排班与执行设置；改动先落在本地草稿，点「保存并应用」才写盘并重建计划任务。
 - **排班**：每天时间、执行日（每天 / 指定星期）、超时、模式（真实执行 / 演练只诊断）、错过补跑、跑完开一个会话汇报、游戏路径（原神可指定 `BetterGI.exe`）。超时指「一轮最多跑多久」（5–180 分钟，默认原神 150、崩3/星铁 45）；计划任务的系统执行时限会自动设为「超时 + 10 分钟」，而那 5 分钟的余量留给插件自己收尾。
-- **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi MCP 注册。缺任何一项都给出「让 DSH 修这个」按钮：能自动做的（下载 bettergi-mcp、安装 bettergi-control、注册 MCP 配置）点一下直接做，按钮会变成「处理中…」；需要多步操作或权限的才新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
+- **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi MCP 注册；选到绝区零时另加「一条龙安装 / 一条龙后端」。缺任何一项都给出「让 DSH 修这个」按钮：能自动做的（下载 bettergi-mcp、安装 bettergi-control、注册 MCP 配置、启动一条龙后端）点一下直接做，按钮会变成「处理中…」；需要多步操作或权限的才新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
 - **立即运行一次 / 停止 / 关闭全部代理**：立即运行走「已保存」的配置；停止会杀掉该游戏的 headless 运行进程；关闭全部代理会移除所有计划任务。
 - **最近运行**：读取 `report.json`（状态、模式、步骤、证据、结论）与 stdout 尾部。
 
@@ -139,10 +139,20 @@ git clone https://github.com/gychen-NJU/bettergi-control "$env:USERPROFILE\.agen
 
 技能目录可用 `DSH_SKILLS_ROOT` 覆盖。
 
+## 绝区零从哪来（一条龙）
+
+绝区零的画面识别与点击交给 [ZenlessZoneZero-OneDragon](https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon)（下称「一条龙」）。它在本机跑一个 HTTP 后端（默认 `http://127.0.0.1:23001`），插件自带一个**零依赖 MCP 服务器** `tools/zzz-od-mcp/zzz-od-mcp.mjs`，把这个后端包装成 agent 可调用的工具（`mcp__zzz-od__*`，12 个：health/status/window/applications/operations/enter/run_one_dragon/run_app/wait/stop/close_game/server）。
+
+- **随插件分发**：MCP 服务器、`automation/zzz-server.ps1`（提权启动/停止后端）、技能说明 `skills/zzz-od-control/SKILL.md` 都在插件包里，不需要额外从别的仓库拉取。
+- **一条龙本体仍需自装**：它是几百 MB 的 Python 应用（含 OCR/识别资源），插件只检测 `D:\software\ZenlessZoneZero-OneDragon`（可用 `DSH_GAME_DAILY_ZZZ_ROOT` 覆盖）是否存在 `.venv\Scripts\python.exe` 与 `src\zzz_od`。
+- **权限**：绝区零以管理员运行，切窗口/发输入需要**提权的一条龙后端**。体检里「一条龙后端」不在跑时给「启动一条龙后端（会弹一次 UAC）」按钮；真实运行前 runner 也会自动尝试启动。
+- **流程**：`zzz_health → zzz_window →（窗口无效时 zzz_enter）→ zzz_run_one_dragon → 循环 zzz_wait → zzz_status`；跑完插件自动关游戏、停后端。已知坑：游戏停在标题界面直接跑一条龙，第一个应用（邮件）会报「未能识别当前画面」，所以必须先 `zzz_enter` 进到「大世界-普通」。
+
 ## 依赖与边界
 
 - 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ bettergi-control 技能 + bettergi-mcp（见上）；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
 - 崩坏3 / 星铁：`game-daily` 家族技能 + 提权助手（坐标点击被拦时按技能说明改用 computer-use）。
+- 绝区零：ZenlessZoneZero-OneDragon（默认 `D:\software\ZenlessZoneZero-OneDragon`）+ 提权的一条龙后端；插件自带 MCP 与技能，游戏本体仍需自己安装。
 - 没有「后台挂机」：原神必须可见且前台、16:9 ≥1920×1080；锁屏会失败。
 - 注册计划任务、跑 BetterGI 需要一次 UAC；面板会在按钮旁说明。
 - 账号风险由使用方式决定：官方条款把第三方软件/模拟操作列为封号理由之一，低调使用。

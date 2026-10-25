@@ -14,6 +14,7 @@ import { resolveBettergiMcp, vendorPath } from '../lib/bettergi-mcp.mjs';
 import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill } from '../lib/skills.mjs';
 import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
+import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl } from '../lib/zzz.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -161,6 +162,29 @@ Promise.resolve()
       const state = guardStatus('genshin');
       if (state.running) throw new Error('冒烟测试期间不该有守护进程');
       return 'keep-foreground.ps1 就绪（BOM ok）';
+    });
+    check('zzz one-dragon integration', () => {
+      const zzz = gameById('zzz');
+      if (!zzz) throw new Error('缺少绝区零注册项');
+      if (zzz.engine !== 'zzz-od') throw new Error(`绝区零引擎应为 zzz-od：${zzz.engine}`);
+      if (zzz.canRun !== true) throw new Error('绝区零应当可以运行');
+      if (!zzz.defaultTime) throw new Error('绝区零缺少默认时间');
+      const realMcp = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..', 'tools', 'zzz-od-mcp', 'zzz-od-mcp.mjs');
+      if (!fs.existsSync(realMcp)) throw new Error(`缺 zzz-od-mcp 脚本：${realMcp}`);
+      const text = fs.readFileSync(realMcp, 'utf8');
+      for (const tool of ['zzz_run_one_dragon', 'zzz_enter', 'zzz_wait', 'zzz_server']) {
+        if (!text.includes(`'${tool}'`) && !text.includes(`"${tool}"`)) throw new Error(`MCP 缺工具：${tool}`);
+      }
+      const serverPs = path.join(path.dirname(realMcp), '..', '..', 'automation', 'zzz-server.ps1');
+      if (!fs.existsSync(serverPs)) throw new Error(`缺 zzz-server.ps1：${serverPs}`);
+      const bytes = fs.readFileSync(serverPs);
+      const nonAscii = bytes.filter((b) => b > 127).length;
+      if (nonAscii > 0) throw new Error(`zzz-server.ps1 含 ${nonAscii} 个非 ASCII 字节（PS 5.1 会读坏）`);
+      const info = inspectZzzInstall();
+      if (typeof info.ok !== 'boolean' || !info.root) throw new Error('inspectZzzInstall 返回值异常');
+      const health = zzzHealthSync({ timeoutMs: 1500 });
+      if (typeof health.ok !== 'boolean') throw new Error('zzzHealthSync 返回值异常');
+      return `zzz:${zzz.engine}:${zzz.defaultTime} mcp ok, server ps ascii ok, health=${health.ok ? 'up' : 'down'} (${zzzBaseUrl()})`;
     });
     check('game process helpers', () => {
       const keys = Object.keys(GAME_PROCESSES);

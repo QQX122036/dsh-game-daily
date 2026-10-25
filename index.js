@@ -266,9 +266,37 @@ export function apply(ctx) {
         done.push({ game, run, summary });
       }
     }
+    // 兜底：进程被外部终止（例如被计划任务强杀）时不会有 report.json，
+    // 以前这种情况完全静默。这里补一条失败记录，让用户至少收到通知与历史。
+    const now = Date.now();
+    for (const game of GAMES) {
+      if (!game.canRun) continue;
+      if (isRunning(env.stateDir, game.id)) continue;
+      const runs = listRuns(env.stateDir, game.id, { limit: 3 });
+      for (const run of runs) {
+        if (run.hasReport) continue;
+        const meta = readJsonSafe(metaPathOf(env.stateDir, game.id, run.runId)) || {};
+        const startedAt = Date.parse(meta.startedAt || '');
+        if (!Number.isFinite(startedAt) || now - startedAt < 3 * 60 * 1000) continue;
+        const known = (state.runs[game.id] || []).find((row) => row.runId === run.runId);
+        if (known) continue;
+        const summary = summarizeRun(run.runId, meta, { status: 'failed', mode: meta.mode || 'real' });
+        store.recordRun(game.id, { ...summary, mode: meta.mode || summary.mode });
+        done.push({
+          game,
+          run,
+          summary,
+          missingReport: true,
+          report: {
+            status: 'failed',
+            notes: '进程被终止或崩溃，未写 report.json（可能超过执行时限或被手动结束）',
+          },
+        });
+      }
+    }
     for (const item of done) {
       const { game, run, summary } = item;
-      const report = readReport(env.stateDir, game.id, run.runId) || {};
+      const report = item.report || readReport(env.stateDir, game.id, run.runId) || {};
       const statusText = reportStatusText(summary.status);
       try {
         notify({

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { GAMES, GAME_IDS, gameById, taskNameFor, isWeekdays } from '../lib/games.mjs';
-import { defaultState, normalizeState, Store, summarizeRun, runStatusOf } from '../lib/state.mjs';
+import { defaultState, defaultGameState, normalizeState, Store, summarizeRun, runStatusOf } from '../lib/state.mjs';
 import { probeDependencies, resolveDsh } from '../lib/deps.mjs';
 import { buildRunPrompt, buildInstallPrompt, buildReportPrompt } from '../lib/prompt.mjs';
 import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } from '../lib/report.mjs';
@@ -50,7 +50,12 @@ check('state normalize', () => {
   if (bad.games.hi.enabled !== false) throw new Error('enabled 非 true 应视为 false');
   if (bad.games.hi.timeoutMin !== 180) throw new Error(`timeout 999 未夹到 180：${bad.games.hi.timeoutMin}`);
   const nan = normalizeState({ games: { hi: { timeoutMin: 'abc' } } });
-  if (nan.games.hi.timeoutMin !== 90) throw new Error(`非数字 timeout 未回落 90：${nan.games.hi.timeoutMin}`);
+  const hiDefault = defaultGameState(GAMES.find((g) => g.id === 'hi')).timeoutMin;
+  if (nan.games.hi.timeoutMin !== hiDefault) {
+    throw new Error(`非数字 timeout 未回落到该游戏默认值 ${hiDefault}：${nan.games.hi.timeoutMin}`);
+  }
+  const genDefault = defaultGameState(GAMES.find((g) => g.id === 'genshin')).timeoutMin;
+  if (genDefault !== 150) throw new Error(`原神默认超时应为 150：${genDefault}`);
   if (bad.games.hi.schedule.time !== '10:00') throw new Error(`非法时间未回落默认：${bad.games.hi.schedule.time}`);
   const good = normalizeState({ games: { sr: { enabled: true, timeoutMin: 200, schedule: { time: '07:30', weekdays: [6, 7], catchUp: false } } } });
   if (good.games.sr.timeoutMin !== 180) throw new Error('timeout 未夹到 180');

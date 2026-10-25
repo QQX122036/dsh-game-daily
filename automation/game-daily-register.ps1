@@ -132,12 +132,16 @@ foreach ($game in $games) {
     if (-not $runner) { throw 'runnerScript missing in tasks.json' }
     $mode = 'real'
     if ($game.mode -and ([string]$game.mode).ToLowerInvariant() -eq 'dry') { $mode = 'dry' }
-    $argument = '"{0}" --game {1} --state-dir "{2}" --profile {3} --mode {4}' -f $runner, $game.id, $StateDir, ([string]$cfg.profile), $mode
+    # Watchdog budget: run-headless.mjs stops itself 5 minutes before this, writes a
+    # fallback report and exits, so the scheduler never has to kill the process tree.
+    $budget = [int]$game.timeoutMin
+    if ($budget -le 0) { $budget = 90 }
+    $argument = '"{0}" --game {1} --state-dir "{2}" --profile {3} --mode {4} --timeout-min {5}' -f $runner, $game.id, $StateDir, ([string]$cfg.profile), $mode, $budget
     if ($cfg.skillsRoot) { $argument += ' --skills-root "{0}"' -f [string]$cfg.skillsRoot }
     $action = New-ScheduledTaskAction -Execute $nodeExe -Argument $argument -WorkingDirectory $StateDir
 
     $catchUp = [bool]$game.catchUp
-    $limit = New-TimeSpan -Minutes ([int]$game.timeoutMin)
+    $limit = New-TimeSpan -Minutes ($budget + 10)
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable:$catchUp -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit $limit
     $principal = New-ScheduledTaskPrincipal -UserId $userName -LogonType Interactive -RunLevel Highest
 

@@ -36,7 +36,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 
 - **顶部游戏页签**：原神 / 崩坏3 / 崩坏：星穹铁道 / 绝区零（后者暂停，仅占位说明）。
 - **代理日常开关（默认关）**：打开后才出现排班与执行设置；改动先落在本地草稿，点「保存并应用」才写盘并重建计划任务。
-- **排班**：每天时间、执行日（每天 / 指定星期）、超时、模式（真实执行 / 演练只诊断）、错过补跑、跑完开一个会话汇报、游戏路径（原神可指定 `BetterGI.exe`）。
+- **排班**：每天时间、执行日（每天 / 指定星期）、超时、模式（真实执行 / 演练只诊断）、错过补跑、跑完开一个会话汇报、游戏路径（原神可指定 `BetterGI.exe`）。超时指「一轮最多跑多久」（5–180 分钟，默认原神 150、崩3/星铁 45）；计划任务的系统执行时限会自动设为「超时 + 10 分钟」，而那 5 分钟的余量留给插件自己收尾。
 - **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi MCP 注册。缺任何一项都给出「让 DSH 修这个」按钮：能自动做的（下载 bettergi-mcp、安装 bettergi-control、注册 MCP 配置）点一下直接做，按钮会变成「处理中…」；需要多步操作或权限的才新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
 - **立即运行一次 / 停止 / 关闭全部代理**：立即运行走「已保存」的配置；停止会杀掉该游戏的 headless 运行进程；关闭全部代理会移除所有计划任务。
 - **最近运行**：读取 `report.json`（状态、模式、步骤、证据、结论）与 stdout 尾部。
@@ -67,7 +67,9 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 ```
 
 - headless 侧通过 `--patch` 叠加 overlay 注入 bettergi MCP（原神需要），并带 `DSH_PERMISSION_MODE=danger-full-access` 实现无人值守；崩3/星铁没有 wincu 时按技能说明用提权助手（`scripts/run-step.mjs --ps`）。
-- 报告是唯一判定依据：`report.json` 的 `status` 为 `success / partial / failed`；插件只认这个文件，不猜进程退出码。
+- 报告是唯一判定依据：`report.json` 的 `status` 为 `success / partial / failed / timeout`；插件只认这个文件，不猜进程退出码。
+- **看门狗**：`run-headless.mjs` 在「超时 − 5 分钟」到点时会主动停掉 headless、写一份兜底 `report.json`（`status=timeout`）再退出，避免被系统执行时限强杀后什么都不留下。
+- **兜底对账**：如果某轮连兜底报告都没写（比如被手动结束或崩溃），reconcile 会在进程确已退出、且已过 3 分钟宽限后，补一条 `failed` 历史并发通知，不再静默。
 - **前台守护**：每轮运行开始时，插件从 `automation/keep-foreground.ps1` 起一个 1 秒轮询的守护进程，游戏窗口被别的窗口抢走时立即拉回（四级回退：`SetForegroundWindow` → AttachThreadInput → 模拟 Alt → `SwitchToThisWindow`），结束/停止时写 `.stop` 自动退出；日志在 `<stateDir>/automation/guard-<game>.log`。面板排班卡里有「前台守护」开关（`ui.foregroundGuard`，默认开）。
 - **进程收尾（真实模式）**：一轮跑完会关掉该游戏的进程（原神连同 `BetterGI.exe`），减少后台占用；开始新一轮前会先关掉其它游戏（`Get-Process` + `Stop-Process -Force`），若上一轮还在跑，计划任务会等它收尾（默认最多 20 分钟，`DSH_GAME_DAILY_WAIT_MS` 可调）而不是两边互相抢窗口。演练模式不动任何进程。
 

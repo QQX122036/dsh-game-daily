@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { startRun, readRunner, isRunning } from '../lib/runner.mjs';
-import { readReport, reportPathOf, runDirOf, readJsonSafe } from '../lib/report.mjs';
+import { startRun, readRunner, isRunning, stopRun } from '../lib/runner.mjs';
+import { readReport, reportPathOf, runDirOf, readJsonSafe, writeJson } from '../lib/report.mjs';
 import { gameById } from '../lib/games.mjs';
 
 /** 读 state.json 里的插件级 UI 开关（前台守护）与该游戏的超时设置。 */
@@ -77,14 +77,44 @@ async function main() {
   }
   log(stateDir, `headless spawned pid=${started.pid} runId=${started.runId}`);
 
-  const deadline = Date.now() + Math.max(5, timeoutMin) * 60 * 1000;
+  // 看门狗预算：比计划任务的执行时限少 5 分钟。到点由插件自己收尾（停 headless、
+  // 写兜底报告），而不是等 Windows 把整个进程树杀掉——那样连报告都不会留下。
+  const budgetMin = Math.max(5, Math.round(timeoutMin) - 5);
+  const deadline = Date.now() + budgetMin * 60 * 1000;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await sleep(5000);
     if (!isRunning(stateDir, args.game)) break;
   }
-  const stillRunning = isRunning(stateDir, args.game);
-  if (stillRunning) {
-    log(stateDir, `timeout after ${args.timeoutMin}min, headless still running`);
+  if (isRunning(stateDir, args.game)) {
+    log(stateDir, `watchdog: ${budgetMin}min budget reached (timeoutMin=${timeoutMin}), stopping run`);
+    try {
+      stopRun({ stateDir, gameId: args.game });
+    } catch (error) {
+      log(stateDir, `watchdog: stopRun failed: ${String((error && error.message) || error)}`);
+    }
+    const stopDeadline = Date.now() + 60 * 1000;
+    while (isRunning(stateDir, args.game) && Date.now() < stopDeadline) await sleep(2000);
+    if (!readReport(stateDir, args.game, started.runId)) {
+      try {
+        writeJson(reportPathOf(stateDir, args.game, started.runId), {
+          schemaVersion: 1,
+          status: 'timeout',
+          mode: args.mode,
+          runId: started.runId,
+          game: args.game,
+          startedAt: new Date(Date.now() - budgetMin * 60 * 1000).toISOString(),
+          endedAt: new Date().toISOString(),
+          steps: [],
+          evidence: [`watchdog=${budgetMin}min`, `timeoutMin=${timeoutMin}`],
+          notes: `超过看门狗预算 ${budgetMin} 分钟，插件主动停止；未拿到 headless 报告。可调大排班超时，或检查是否有窗口频繁抢焦点导致反复暂停。`,
+          generatedBy: 'run-headless-watchdog',
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    log(stateDir, `watchdog: stopped after ${budgetMin}min, report written`);
     process.exit(3);
   }
   const report = readReport(stateDir, args.game, started.runId);

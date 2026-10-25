@@ -10,11 +10,11 @@ import { buildRunPrompt, buildInstallPrompt, buildReportPrompt } from '../lib/pr
 import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } from '../lib/report.mjs';
 import { queryTasks, taskStatus, refreshTaskInfo, readTaskDefinition, computeNextRun } from '../lib/tasks.mjs';
 import { guardScriptPath, guardStatus } from '../lib/runner.mjs';
-import { resolveBettergiMcp, vendorPath } from '../lib/bettergi-mcp.mjs';
-import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill } from '../lib/skills.mjs';
+import { resolveBettergiMcp, vendorPath, bundledPath } from '../lib/bettergi-mcp.mjs';
+import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill, bundledSkillPath } from '../lib/skills.mjs';
 import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
-import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl } from '../lib/zzz.mjs';
+import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot } from '../lib/zzz.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -268,6 +268,77 @@ Promise.resolve()
         fs.rmSync(tmp, { recursive: true, force: true });
       }
       return 'vendor 优先 / env 覆盖 ok';
+    });
+    check('zzz install helpers', () => {
+      const targets = zzzInstallTargets();
+      if (!targets.length) throw new Error('没有安装目标候选');
+      const systemRoot = `${String(process.env.SystemDrive || 'C:').replace(/\\+$/, '')}\\`.toLowerCase();
+      for (const dir of targets) {
+        if (path.parse(path.resolve(dir)).root.toLowerCase() === systemRoot) throw new Error(`候选里出现了系统盘：${dir}`);
+      }
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-zzz-'));
+      const savedGame = process.env.DSH_GAME_DAILY_ZZZ_GAME;
+      try {
+        if (inspectZzzInstallRoot(tmp).ok) throw new Error('空目录不应判定为已安装');
+        const fakeGame = path.join(tmp, 'ZenlessZoneZero.exe');
+        fs.writeFileSync(fakeGame, 'stub', 'utf8');
+        process.env.DSH_GAME_DAILY_ZZZ_GAME = fakeGame;
+        const cfg = ensureZzzConfigs(tmp);
+        if (!fs.existsSync(path.join(cfg.dir, 'game.yml'))) throw new Error('缺少 game.yml');
+        const account = fs.readFileSync(path.join(cfg.dir, 'game_account.yml'), 'utf8');
+        if (!account.includes(fakeGame)) throw new Error('game_account.yml 没写入游戏路径');
+        const detected = detectZzzGamePath(path.join(cfg.dir, 'game_account.yml'));
+        if (detected !== fakeGame) throw new Error(`detectZzzGamePath 读不回：${detected}`);
+        return `targets=${targets.length} config steps=${cfg.steps.length} ok`;
+      } finally {
+        if (savedGame === undefined) delete process.env.DSH_GAME_DAILY_ZZZ_GAME;
+        else process.env.DSH_GAME_DAILY_ZZZ_GAME = savedGame;
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+    check('bettergi-mcp bundled', () => {
+      const file = bundledPath();
+      if (!fs.existsSync(file)) throw new Error(`插件没自带 bettergi-mcp：${file}`);
+      const size = fs.statSync(file).size;
+      if (size < 50000) throw new Error(`自带 bettergi-mcp 过小：${size} 字节`);
+      const text = fs.readFileSync(file, 'utf8');
+      for (const tool of ['bgi_status', 'bgi_run_one_dragon']) {
+        if (!text.includes(`'${tool}'`) && !text.includes(`"${tool}"`)) throw new Error(`自带 MCP 缺工具：${tool}`);
+      }
+      const savedEnv = process.env.DSH_GAME_DAILY_BETTERGI_MCP;
+      delete process.env.DSH_GAME_DAILY_BETTERGI_MCP;
+      try {
+        // 没有 stateDir / vendor 时，应直接命中插件自带副本（装好即用，不需要联网）。
+        const resolved = resolveBettergiMcp({});
+        if (resolved !== file) throw new Error(`无外部副本时应返回自带路径，实际：${resolved}`);
+      } finally {
+        if (savedEnv === undefined) delete process.env.DSH_GAME_DAILY_BETTERGI_MCP;
+        else process.env.DSH_GAME_DAILY_BETTERGI_MCP = savedEnv;
+      }
+      return `${Math.round(size / 1024)} KB, bundled fallback ok`;
+    });
+    await checkAsync('bettergi-control bundled install', async () => {
+      const dir = bundledSkillPath('bettergi-control');
+      if (!fs.existsSync(path.join(dir, 'SKILL.md'))) throw new Error(`插件没自带技能：${dir}`);
+      const scripts = fs.readdirSync(path.join(dir, 'scripts')).filter((f) => /\.ps1$/i.test(f)).length;
+      if (scripts < 15) throw new Error(`自带技能脚本不足：${scripts}`);
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-skill-bundled-'));
+      try {
+        const info = await installSkill('bettergi-control', { root, source: 'bundled' });
+        if (!info.ok) throw new Error(`本地安装失败：${info.error}`);
+        if (info.source !== 'bundled') throw new Error(`应走自带副本：${info.source}`);
+        if (!fs.existsSync(path.join(root, 'bettergi-control', 'SKILL.md'))) throw new Error('安装后缺 SKILL.md');
+        const target = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-skill-remote-'));
+        try {
+          // source=remote 只做参数校验：不真的联网下载，避免 CI 依赖网络。
+          if (!SKILL_REPOS['bettergi-control'].zip) throw new Error('缺远程 zip 地址');
+        } finally {
+          fs.rmSync(target, { recursive: true, force: true });
+        }
+        return `bundled scripts=${scripts} files=${info.files} -> temp root ok`;
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     });
     for (const item of results) console.log(`${item.ok ? 'PASS' : 'FAIL'}  ${item.name}  ${item.detail}`);
     exitCode = results.some((item) => !item.ok) ? 1 : 0;

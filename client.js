@@ -51,9 +51,12 @@ window.__ModuleLoader__.load({
         fix: '让 DSH 修这个',
         fixing: '处理中…',
         fixed: '已打开修复会话，回到这里点「重新体检」。',
-        bettergiMcpDownloaded: 'bettergi-mcp 已下载到插件的 vendor 目录。',
-        skillInstalled: 'bettergi-control 技能已安装。',
+        bettergiMcpDownloaded: 'bettergi-mcp 就绪（插件自带，未联网）。',
+        skillInstalled: 'bettergi-control 技能已安装（插件自带，未联网）。',
         mcpRegistered: 'bettergi MCP 已写入当前 profile，重启 DSH 后生效。',
+        installingZzz: '正在下载并安装一条龙（首次要下源码 + Python 依赖，可能几分钟，请别关页面）…',
+        zzzInstalled: '一条龙已安装。下一步：点「启动一条龙后端」。',
+        zzzServerStarting: '正在启动一条龙后端，弹 UAC 时请点允许…',
         applied: '已保存并提交注册；弹 UAC 时请点允许。',
         saved: '已保存',
         dirty: '有改动，待应用',
@@ -116,9 +119,12 @@ window.__ModuleLoader__.load({
         fix: 'Let DSH fix it',
         fixing: 'Working…',
         fixed: 'Fix session opened. Come back and re-check.',
-        bettergiMcpDownloaded: 'bettergi-mcp downloaded into the plugin vendor directory.',
-        skillInstalled: 'bettergi-control skill installed.',
+        bettergiMcpDownloaded: 'bettergi-mcp ready (bundled with the plugin, no network).',
+        skillInstalled: 'bettergi-control skill installed (bundled, no network).',
         mcpRegistered: 'bettergi MCP written into the current profile; restart DSH to load it.',
+        installingZzz: 'Installing OneDragon (source + Python deps, may take minutes — keep this page open)…',
+        zzzInstalled: 'OneDragon installed. Next: start the backend.',
+        zzzServerStarting: 'Starting the OneDragon backend; accept the UAC prompt if it appears…',
         applied: 'Saved and registration started; approve the UAC prompt if shown.',
         saved: 'Saved',
         dirty: 'Unsaved changes',
@@ -662,14 +668,15 @@ window.__ModuleLoader__.load({
 
       const fixDependency = async (check) => {
         const fix = check.fix || {};
+        const action = String(fix.action || check.id);
         if (fixing) return;
         setFixing(check.id);
-        setMessage(t('fixing'));
+        setMessage(action === 'install-zzz-od' ? t('installingZzz') : action === 'start-zzz-server' ? t('zzzServerStarting') : t('fixing'));
         try {
           const value = await api('/install', {
             method: 'POST',
             body: JSON.stringify({
-              action: fix.action || check.id,
+              action,
               game: tab,
               checkId: check.id,
               checkDetail: check.detail || '',
@@ -685,7 +692,17 @@ window.__ModuleLoader__.load({
             }
           }
           if (value.ok === true && !value.sessionId) {
-            const action = String(value.action || '');
+            if (action === 'install-zzz-od') {
+              setMessage(value.note || t('zzzInstalled'));
+              await load(true);
+              await refreshProbe(tab);
+              return;
+            }
+            if (action === 'start-zzz-server') {
+              setMessage(value.note || t('zzzServerStarting'));
+              await refreshProbe(tab);
+              return;
+            }
             if (action === 'install-bettergi-mcp' || action === 'fix-bettergi-mcp') {
               setMessage(value.note || t('mcpRegistered'));
               await load(true);

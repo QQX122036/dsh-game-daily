@@ -1,4 +1,4 @@
-# dsh-game-daily · Game Daily
+﻿# dsh-game-daily · Game Daily
 
 [简体中文](README.md) | **English**
 
@@ -37,7 +37,7 @@ The agent will clone, install the bundle, verify activation, and use the built-i
 - **Game tabs**: Genshin Impact / Honkai Impact 3rd / Honkai: Star Rail / Zenless Zone Zero (driven by ZenlessZoneZero-OneDragon).
 - **Daily-agent switch (off by default)**: schedule and run settings appear only after you turn it on. Edits stay in a local draft; nothing is written and no task is (re)created until you press **Save & Apply**.
 - **Schedule**: daily time, run days (every day / specific weekdays), timeout, mode (real run / dry-run diagnosis only), catch-up on missed runs, open a report session after each run, game path (Genshin can point at `BetterGI.exe`). Timeout means how long one run may take (5–180 min; defaults: Genshin 150, HI3/Star Rail 45). The scheduler's execution time limit is set to timeout + 10 min, and the watchdog spends the 5-minute margin on finalizing the run itself.
-- **Dependency check**: dsh CLI, DSH version, headless runner (including the credentials patch), computer-use plugin, skill files, coordinate calibration, elevation helper, BetterGI, the bettergi-control skill, the bettergi-mcp script, and the bettergi MCP registration. Every missing item gets a **"Let DSH fix it"** button: one-click items (download bettergi-mcp, install bettergi-control, register the MCP row) run directly and the button turns into **Working…**; multi-step or privileged repairs open a new DSH session with the repair steps (including backup/read-back requirements) and switch the UI to it.
+- **Dependency check**: dsh CLI, DSH version, headless runner (including the credentials patch), computer-use plugin, skill files, coordinate calibration, elevation helper, BetterGI, the bettergi-control skill, the bettergi-mcp script, and the bettergi MCP registration. Every missing item gets a **"Let DSH fix it"** button: one-click items (install the bundled bettergi-control skill, register the MCP row) run directly and the button turns into **Working…**; multi-step or privileged repairs open a new DSH session with the repair steps (including backup/read-back requirements) and switch the UI to it.
 - **Run once / Stop / Disable all**: "Run once" uses the saved configuration; "Stop" kills that game's headless run; "Disable all" removes every scheduled task.
 - **Recent runs**: reads `report.json` (status, mode, steps, evidence, conclusion) plus the tail of stdout.
 
@@ -108,48 +108,33 @@ Settings panel ──POST /api/game-daily/apply──▶ state.json + automation
 | `DSH_GAME_DAILY_BETTERGI_MCP` | auto-resolved (see below) | Explicit path to the bettergi MCP server script (highest priority) |
 | `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI install path (used by the dependency check) |
 
-## Where bettergi-mcp comes from
+## Bundled tools (bettergi-mcp / bettergi-control)
 
-The Genshin `bgi_*` tools are served by a separate repository, [`gychen-NJU/bettergi-mcp`](https://github.com/gychen-NJU/bettergi-mcp) — a single-file, dependency-free MCP server. This plugin does **not** bundle it; resolution order:
+So that "install the plugin = all tools present", both Genshin companion tools **ship inside the plugin package**:
 
-1. the script pointed to by `DSH_GAME_DAILY_BETTERGI_MCP`;
-2. the downloaded copy at `$DSH_HOME/game-daily/vendor/bettergi-mcp/bettergi-mcp.mjs`;
-3. `dsh-betterGI/tools/bettergi-mcp/bettergi-mcp.mjs` next to this plugin (a developer machine layout).
+| Location | Content |
+| --- | --- |
+| `tools/bettergi-mcp/bettergi-mcp.mjs` | the MCP server exposing the Genshin `bgi_*` tools (single file, zero dependencies, ~100KB, 29 tools) |
+| `tools/bettergi-control/` | the bettergi-control skill (`SKILL.md` + `references/` + 15 `bgi-*.ps1` scripts) |
 
-When the dependency check finds nothing, the panel shows a **Download bettergi-mcp (from GitHub)** button that fetches the single file into (2). Enabling the Genshin schedule and pressing **Save & apply** also fills it in. Cloning it yourself works too:
-
-```powershell
-git clone https://github.com/gychen-NJU/bettergi-mcp
-# then set DSH_GAME_DAILY_BETTERGI_MCP=<clone dir>\bettergi-mcp.mjs
-```
-
-After the script exists, **Register bettergi MCP** appends a `dsh-mcp-client` entry to the current profile's `cordis.patch.yml` (backed up as `cordis.patch.yml.bak-gd-<timestamp>`, read back and verified, and skipped when already present). Restart DSH to load it. Enabling the Genshin schedule and pressing **Save & apply** also downloads and registers it automatically.
-
-## Where the bettergi-control skill comes from
-
-Genshin's daily execution relies on a separate skill repository, [`gychen-NJU/bettergi-control`](https://github.com/gychen-NJU/bettergi-control) (`SKILL.md` + 15 `bgi-*.ps1` scripts, also pure PowerShell). The plugin does **not** bundle it either:
-
-- when `%USERPROFILE%\.agents\skills\bettergi-control\SKILL.md` is missing (or has fewer than 10 scripts), the panel shows **Install bettergi-control from GitHub**;
-- one click downloads the zip, extracts, verifies and atomically replaces the skill directory (the old one is backed up as `bettergi-control.bak-<timestamp>`), no session needed;
-- you can also clone it manually:
-
-```powershell
-git clone https://github.com/gychen-NJU/bettergi-control "$env:USERPROFILE\.agents\skills\bettergi-control"
-```
-
-The skill directory can be overridden with `DSH_SKILLS_ROOT`.
+- **bettergi-mcp**: the dependency check reports "ready (bundled)"; **Register bettergi MCP** just appends a `dsh-mcp-client` entry to the current profile's `cordis.patch.yml` (backed up as `cordis.patch.yml.bak-gd-<timestamp>`, read back and verified, skipped when already present). Restart DSH to load it — **no network access needed**.
+- **bettergi-control**: when `%USERPROFILE%\.agents\skills\bettergi-control\SKILL.md` is missing (or has fewer than 10 scripts), the panel shows **Install bettergi-control (bundled)**; one click is a **pure local copy** (the old directory is backed up as `bettergi-control.bak-<timestamp>`) — **no network access needed**. Override the skill directory with `DSH_SKILLS_ROOT`.
+- The remote repositories [`gychen-NJU/bettergi-mcp`](https://github.com/gychen-NJU/bettergi-mcp) and [`gychen-NJU/bettergi-control`](https://github.com/gychen-NJU/bettergi-control) are only the **upstream source / update channel**: the plugin only goes to GitHub when its bundled copy is missing (an incomplete install), to fetch the single file (mcp) or zip (skill) as a fallback.
+- Resolution order (bettergi-mcp): `DSH_GAME_DAILY_BETTERGI_MCP` env → `<stateDir>/vendor` (manual override/update) → **bundled copy** → sibling `dsh-betterGI` workspace (developer layout).
+- Cloning for updates still works: `git clone https://github.com/gychen-NJU/bettergi-mcp`, then `DSH_GAME_DAILY_BETTERGI_MCP=<clone dir>\bettergi-mcp.mjs`.
 
 ## Where Zenless Zone Zero comes from (OneDragon)
 
 All screen recognition and clicking for ZZZ is delegated to [ZenlessZoneZero-OneDragon](https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon) ("one-dragon"). It runs a local HTTP backend (default `http://127.0.0.1:23001`). The plugin bundles a **zero-dependency MCP server** at `tools/zzz-od-mcp/zzz-od-mcp.mjs` that wraps that backend into agent tools (`mcp__zzz-od__*`, 12 of them: health/status/window/applications/operations/enter/run_one_dragon/run_app/wait/stop/close_game/server).
 
 - **Ships with the plugin**: the MCP server, `automation/zzz-server.ps1` (elevated start/stop of the backend) and `skills/zzz-od-control/SKILL.md` are all inside the package — nothing is fetched from another repository.
-- **OneDragon itself is still external**: it is a large Python app (OCR resources included). The plugin only checks for `.venv\Scripts\python.exe` and `src\zzz_od` under `D:\software\ZenlessZoneZero-OneDragon` (override with `DSH_GAME_DAILY_ZZZ_ROOT`).
+- **OneDragon itself can be installed in one click**: when the ZZZ dependency check reports it missing, pressing "Let DSH fix this" runs `git clone` (or a zip download when git is absent) + `uv sync` + writes the base config (`config/01/game.yml`, `game_account.yml`). It installs to `D:\software\ZenlessZoneZero-OneDragon` by default and **never into the system drive**; set `DSH_GAME_DAILY_ZZZ_ROOT` to choose another location (C: is still rejected). The first install downloads hundreds of MB and takes a few minutes, so the button keeps showing "Working…". The chosen root is recorded in `<stateDir>/zzz-root.txt` and used by later checks and runs.
 - **Privileges**: ZZZ runs elevated, so switching its window / sending input needs an **elevated backend**. When the dependency check finds it down, it offers **Start OneDragon backend (one UAC)**; the runner also tries to start it before a real run.
 - **Flow**: `zzz_health → zzz_window → (zzz_enter if the window is not ready) → zzz_run_one_dragon → zzz_wait in a loop → zzz_status`; after the run the plugin closes the game and stops the backend. Known trap: running one-dragon while the game sits on the title screen makes the first app (mail) fail with "cannot recognise the screen", so `zzz_enter` first.
 ## Dependencies and boundaries
 
-- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + the bettergi-control skill + bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.`n- Zenless Zone Zero: ZenlessZoneZero-OneDragon (default `D:\software\ZenlessZoneZero-OneDragon`) + an elevated one-dragon backend. The MCP server and skill ship with this plugin; the OneDragon app itself still has to be installed separately.
+- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + **bundled** bettergi-control skill and bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.
+- Zenless Zone Zero: ZenlessZoneZero-OneDragon (default `D:\software\ZenlessZoneZero-OneDragon`, auto-installable when missing) + an elevated one-dragon backend. The MCP server and skill ship with this plugin; the game itself still has to be installed.
 - HI / SR: the `game-daily` skill family + the elevation helper (switch to computer-use per the skill docs when synthetic clicks are filtered).
 - There is **no background/AFK mode**: Genshin must be visible and in the foreground at 16:9 ≥ 1920×1080; a locked screen will fail.
 - Registering scheduled tasks and running BetterGI require one UAC confirmation; the panel says so next to the button.

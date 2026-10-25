@@ -27,7 +27,7 @@ import { resolveBettergiMcp, fetchBettergiMcp } from './lib/bettergi-mcp.mjs';
 import { installSkill } from './lib/skills.mjs';
 import { registerBettergiMcp } from './lib/mcp-register.mjs';
 import { resolveNodeExe } from './lib/nodeexe.mjs';
-import { ensureZzzServer } from './lib/zzz.mjs';
+import { ensureZzzServer, installZzzOneDragon } from './lib/zzz.mjs';
 
 export const name = 'game-daily';
 export const inject = ['webServer'];
@@ -509,7 +509,9 @@ export function apply(ctx) {
           action: body.action,
           skill: installed,
           note: installed.ok
-            ? `bettergi-control 已安装到 ${installed.path}${installed.scripts ? `（${installed.scripts} 个脚本）` : ''}。`
+            ? `bettergi-control 已安装到 ${installed.path}${installed.scripts ? `（${installed.scripts} 个脚本）` : ''}${
+                installed.source === 'bundled' ? '，来自插件自带副本（未联网）' : '，来自 GitHub'
+              }。`
             : installed.error,
         };
       }
@@ -524,9 +526,29 @@ export function apply(ctx) {
             : `启动一条龙后端失败：${result.error || (result.script && result.script.error) || '未知原因'}`,
         };
       }
+      if (body.action === 'install-zzz-od') {
+        // 一键安装一条龙：clone（或 zip）+ uv sync + 基础配置；默认落在 D 盘。
+        // 这一步可能跑几分钟，面板会一直显示「处理中…」。
+        const installed = await installZzzOneDragon();
+        if (installed.ok) {
+          store.mutate((state) => {
+            state.deps = { ...(state.deps || {}), zzzRoot: installed.root };
+          });
+        }
+        return {
+          ok: installed.ok === true,
+          action: body.action,
+          install: installed,
+          note: installed.ok
+            ? `一条龙已安装到 ${installed.root}${installed.alreadyInstalled ? '（本来就已安装）' : ''}。下一步：点「启动一条龙后端」。`
+            : `安装一条龙失败：${installed.error || '请查看安装步骤里的输出'}`,
+        };
+      }
       if (body.action === 'install-bettergi-mcp' || body.action === 'fix-bettergi-mcp') {
         let fetched = null;
-        if (body.action === 'install-bettergi-mcp' && !resolveBettergiMcp({ stateDir: env.stateDir })) {
+        // 插件自带 tools/bettergi-mcp/bettergi-mcp.mjs：正常情况下直接注册，不联网。
+        // 只有自带副本缺失（安装不完整）时才去 GitHub 取单文件兜底。
+        if (!resolveBettergiMcp({ stateDir: env.stateDir })) {
           fetched = await fetchBettergiMcp({ stateDir: env.stateDir });
           if (fetched.ok) {
             store.mutate((state) => {
@@ -535,10 +557,11 @@ export function apply(ctx) {
           }
         }
         const script = resolveBettergiMcp({ stateDir: env.stateDir });
-        let registered = { ok: false, error: '没找到 bettergi-mcp 脚本（先下载它）' };
+        let registered = { ok: false, error: '没找到 bettergi-mcp 脚本（插件自带副本缺失，且下载失败）' };
         if (script) registered = registerBettergiMcp({ profile: env.profile, scriptPath: script, home: env.home });
         const parts = [];
-        if (fetched && fetched.ok) parts.push(`已下载 bettergi-mcp（${Math.round(fetched.bytes / 1024)} KB）`);
+        if (fetched && fetched.ok) parts.push(`已从 GitHub 补下 bettergi-mcp（${Math.round(fetched.bytes / 1024)} KB）`);
+        else if (!fetched && script) parts.push('使用插件自带 bettergi-mcp（未联网）');
         if (registered.ok) {
           parts.push(registered.changed ? `已写入 ${registered.path}，重启 DSH 后生效` : '当前 profile 已注册 bettergi MCP');
         } else {
@@ -549,6 +572,7 @@ export function apply(ctx) {
           action: body.action,
           fetched,
           registered,
+          script,
           restartRequired: registered.changed === true,
           note: parts.join('；'),
         };

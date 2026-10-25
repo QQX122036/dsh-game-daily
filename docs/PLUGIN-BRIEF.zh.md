@@ -1,4 +1,4 @@
-# dsh-game-daily 插件说明（供「简介视频」制作会话使用）
+﻿# dsh-game-daily 插件说明（供「简介视频」制作会话使用）
 
 > 这份文档是给**新工作区里的另一个会话**看的：它没有本会话的历史。读完它，你应该能理解这个插件是什么、为什么存在、长什么样、怎么运行、哪些话可以讲、哪些话不能讲，并据此写分镜、口播稿、准备录屏。
 >
@@ -28,7 +28,7 @@
 | 已有能力 | 能做什么 | 问题 |
 | --- | --- | --- |
 | `game-daily` / `game-daily-hi` / `game-daily-sr` 技能 | 崩坏3、星铁各 14 步日常，在真实游戏界面里点完 | 需要人开一个会话说「帮我清日常」，跑完也没有固定的汇报格式 |
-| `bettergi-control` 技能 + `bettergi-mcp`（29 个工具） | 原神一条龙（领邮件→合成树脂→秘境→每日奖励→尘歌壶→狗粮批发） | 同上，且窗口/分辨率等前置条件要自己查 |
+| **随插件自带**的 `bettergi-control` 技能 + `bettergi-mcp`（29 个工具） | 原神一条龙（领邮件→合成树脂→秘境→每日奖励→尘歌壶→狗粮批发） | 同上，且窗口/分辨率等前置条件要自己查 |
 | Windows 计划任务 | 到点触发 | 只能触发「一条死命令」，不会汇报、不会记录、不会失败重试 |
 
 缺的是**产品化的那一层**：入口（设置页）、开关、排班、依赖体检、执行编排、结果留痕、向用户汇报。这就是这个插件。
@@ -139,7 +139,7 @@
 
 ### 原神（engine = bettergi）
 
-- 依赖：BetterGI（默认 `D:\software\BetterGI`）+ bettergi-control 技能 + bettergi-mcp（MCP 服务器，29 个工具）。
+- 依赖：BetterGI（默认 `D:\software\BetterGI`）+ **随插件自带**的 bettergi-control 技能与 bettergi-mcp（MCP 服务器，29 个工具）。
 - 流程：`bgi_doctor` → `bgi_status` → `bgi_focus_game`（还原窗口并置前）→ `bgi_run_one_dragon {config:"日常"}` → `bgi_watch` → `bgi_results`。
 - 一条龙 6 个任务（来自 `User\OneDragon\日常.json` 的 TaskOrder）：
   1. 领取邮件
@@ -180,7 +180,9 @@
 | `automation/headless-overlay.yml` | 运行时 overlay（原神注入 bettergi MCP） |
 | `automation/run-headless.log` | 计划任务侧日志 |
 | `automation/guard-<game>.log` / `.stop` | 前台守护日志与停止旗标 |
-| `vendor/bettergi-mcp/bettergi-mcp.mjs` | 按需下载的 MCP 服务器副本 |
+| `tools/bettergi-mcp/bettergi-mcp.mjs` | 随包自带的 MCP 服务器（原神 `bgi_*`，29 个工具） |
+| `tools/bettergi-control/` | 随包自带的 bettergi-control 技能（`SKILL.md` + 15 个脚本） |
+| `vendor/bettergi-mcp/bettergi-mcp.mjs` | 可选：手动更新/覆盖用的副本（优先级高于自带） |
 | `notifications.log` | 通知记录 |
 
 `state.json` 用 **tmp + fsync + rename** 原子写；坏文件会被重命名为 `state.json.bad-<时间戳>` 并继续用默认值。
@@ -196,12 +198,12 @@
 | GET | `/state` | 面板全量状态（games 是**数组**，含 task 的下次运行/状态） |
 | GET | `/probe?games=genshin,hi` | 依赖体检（含逐项 fix 动作） |
 | POST | `/ui` | 保存 UI 级设置（lastGame / reportSessions / foregroundGuard） |
-| POST | `/apply` | 保存排班 + 写 tasks.json + 开始注册（支持 `dryRun`）；原神启用时顺手下载 bettergi-mcp 并注册 MCP 行 |
+| POST | `/apply` | 保存排班 + 写 tasks.json + 开始注册（支持 `dryRun`）；原神启用时顺手确认 bettergi-mcp（自带即用，缺才下载）并注册 MCP 行 |
 | POST | `/disable` | 关闭全部代理并删除计划任务（一次 UAC） |
 | POST | `/run` | 立即运行一次 `{game, mode?, trigger?}` |
 | POST | `/stop` | 停止某游戏的在跑实例（停守护 + taskkill） |
 | POST | `/run-task` | 直接触发已注册的 Windows 计划任务 |
-| POST | `/install` | 一键修复：`install-bettergi-skill`（下载 zip 装技能）、`install-bettergi-mcp`（下载+注册）、`fix-bettergi-mcp`（只注册）；其它 action 开修复会话 |
+| POST | `/install` | 一键修复：`install-bettergi-skill`（从自带副本本地安装）、`install-bettergi-mcp`（确认自带副本并注册，缺失才下载）、`fix-bettergi-mcp`（只注册）；其它 action 开修复会话 |
 | GET | `/runs?game=` | 运行历史列表 |
 | GET | `/run?game=&runId=` | 单轮报告 + stdout 尾部 |
 | POST | `/reconcile` | 手动触发一次对账（调试用） |
@@ -234,8 +236,8 @@
 | `calibration` | 技能引擎游戏有 `state/coords.local.json` | 警告（校准） |
 | `helper` | 提权助手 `state/helper.pid` 存活 | 阻断（启动助手，一次 UAC） |
 | `bettergi` | BetterGI 安装位置与版本 | 警告（安装/改路径） |
-| `bettergi-skill` | bettergi-control 技能（`SKILL.md` + ≥10 个脚本） | 阻断（**一键从 GitHub 装技能**） |
-| `bettergi-mcp` | MCP 服务器脚本是否就位 | 警告（**一键从 GitHub 下载**） |
+| `bettergi-skill` | bettergi-control 技能（`SKILL.md` + ≥10 个脚本） | 阻断（**一键安装自带技能**，不联网） |
+| `bettergi-mcp` | MCP 服务器脚本是否就位 | 警告（**随包自带**，缺失才从 GitHub 补） |
 | `bettergi-mcp-registered` | 当前 profile 是否声明 bettergi MCP | 警告（**一键写入 profile 补丁**，重启生效） |
 
 崩3/星铁只检查前 7 项里适用的部分（不查 BetterGI 三项）。
@@ -248,7 +250,7 @@
 - **不支持的分辨率**：原神需要 16:9 且 ≥1920×1080（本机 2560×1600 独占全屏会直接被判为硬阻断，这也是作者第一次 dry-run 报告 `partial` 的原因）。
 - **注册计划任务需要一次 UAC**：点「保存并应用」/「关闭全部代理」会弹；之后到点运行不再弹。
 - **首次校准**：崩3/星铁换分辨率、窗口模式或 DPI 后要重新校准坐标。
-- **绝区零**：走 ZenlessZoneZero-OneDragon 后端（需管理员权限）；一条龙本体需自行安装。
+- **绝区零**：走 ZenlessZoneZero-OneDragon 后端（需管理员权限）；一条龙本体可由插件一键自动安装（默认 D 盘、不会装进 C 盘，首次需下载几百 MB 并 uv sync，按钮会显示「处理中…」），装完记录在 `<stateDir>/zzz-root.txt`。
 - **不覆盖的日常内容**：原神一条龙不含每日委托/地脉花/首领/七圣召唤/采集/深渊；崩3/星铁按技能里的 14 步，不含活动或深渊。
 - **账号风险**：官方条款把第三方软件/模拟操作列为封号理由之一；插件自身不做注入、不改游戏文件，但使用方式仍需低调。
 - **改代码要重启桌面端**：插件从 profile 的 junction 读源码，但运行中的 Electron 进程不会热更新。
@@ -257,7 +259,7 @@
 
 ## 13. 已完成的验证（可以当作「真做过」的证据）
 
-- 插件版本 `0.1.0`，MIT；`node test/smoke.mjs` → **15/15 PASS**（含状态原子写回读、prompt 构造、dsh 解析、依赖体检、计划任务 XML 解析、前台守护资产 BOM、bettergi-mcp 解析、技能安装 guard、MCP 注册幂等）。
+- 插件版本 `0.2.0`，MIT；`node test/smoke.mjs` → **18/18 PASS**（含状态原子写回读、prompt 构造、dsh 解析、依赖体检、计划任务 XML 解析、前台守护资产 BOM、bettergi-mcp 解析、技能安装 guard、MCP 注册幂等）。
 - 真实注册：`/apply` 触发一次 UAC，`register-result.json` 返回 `created`；`Get-ScheduledTask 'game-daily-dev-genshin'` → `Ready`，触发器每天 11:00、`RunLevel Highest`、`WakeToRun`。
 - 端到端：手动 `Start-ScheduledTask` → headless 会话真实执行 → `runs/genshin/20261024-022625/report.json`（`status:"partial"`，12 步 12 条证据，含截图）；任务结束 `LastTaskResult=0`；通知写出「原神 日常：部分完成 …」；`state.json` 记账。
 - 桌面端：`plugin_manager install_bundle` 成功，设置页出现「游戏日常」，客户端 slot `{id:"game-daily", order:35, active:true}`。
@@ -276,8 +278,8 @@
 - 手动：clone 后在 DSH 里 `plugin_manager install_bundle target=<目录>`；开发期可用 `dsh plugin --profile web add link:<目录>` 在 web 端联调。
 - 装完**重启一次桌面端**（首次安装），之后设置页生效。
 
-配套 MCP：<https://github.com/gychen-NJU/bettergi-mcp>（原神用；插件缺它时可一键下载，故不必手动装）。
-配套技能：<https://github.com/gychen-NJU/bettergi-control>（原神日常执行用；插件缺它时可一键安装）。
+配套 MCP：<https://github.com/gychen-NJU/bettergi-mcp>（原神用；**随插件自带**，上游仓库只作为更新通道）。
+配套技能：<https://github.com/gychen-NJU/bettergi-control>（原神日常执行用；**随插件自带**，可一键本地安装）。
 
 ---
 
@@ -319,7 +321,7 @@
 **不要说的话**
 
 - 不要说「全自动无人值守挂机」——需要游戏可见且前台。
-- 绝区零已接入（一条龙 + 插件自带 zzz-od MCP/skill），但一条龙本体要自己装。
+- 绝区零已接入（一条龙 + 插件自带 zzz-od MCP/skill），一条龙本体可在体检里「让 DSH 修复」一键安装（默认 D 盘，避开 C 盘）。
 - 不要说「包办所有日常」——原神只有一条龙 6 任务。
 - 不要把「演练模式」说成「真的跑」；也不要把 `partial` 说成失败——它是「跑完了但有前置条件没满足」，报告里有明确原因。
 - 不要展示未打码的 UID/账号信息。

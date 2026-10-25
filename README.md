@@ -1,4 +1,4 @@
-# dsh-game-daily · 游戏日常
+﻿# dsh-game-daily · 游戏日常
 
 **简体中文** | [English](README.en.md)
 
@@ -108,51 +108,35 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | `DSH_GAME_DAILY_BETTERGI_MCP` | 自动解析（见下） | bettergi MCP 服务器脚本的显式路径（优先级最高） |
 | `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI 安装位置（体检用） |
 
-## bettergi-mcp 从哪来
+## 随插件自带的工具（bettergi-mcp / bettergi-control）
 
-原神的 `bgi_*` 工具由独立仓库 [`gychen-NJU/bettergi-mcp`](https://github.com/gychen-NJU/bettergi-mcp) 提供（单文件、零依赖的 MCP 服务器）。插件**不捆绑**它，按以下顺序解析：
+为了让「装好插件 = 工具齐全」，两份原神配套工具**直接打进插件包**，安装插件时就已经在：
 
-1. 环境变量 `DSH_GAME_DAILY_BETTERGI_MCP` 指向的脚本；
-2. 插件状态目录下的下载副本：`$DSH_HOME/game-daily/vendor/bettergi-mcp/bettergi-mcp.mjs`；
-3. 与本插件同级的 `dsh-betterGI/tools/bettergi-mcp/bettergi-mcp.mjs`（开发者本机布局）。
+| 位置 | 内容 |
+| --- | --- |
+| `tools/bettergi-mcp/bettergi-mcp.mjs` | 原神 `bgi_*` 工具的 MCP 服务器（单文件、零依赖，约 100KB，29 个工具） |
+| `tools/bettergi-control/` | bettergi-control 技能（`SKILL.md` + `references/` + 15 个 `bgi-*.ps1`） |
 
-体检发现没有脚本时，面板给出「下载 bettergi-mcp（从 GitHub）」按钮，点一下就把单文件下载到 (2)；启用原神的排班并点「保存并应用」时也会顺手补齐。要自己 clone 也可以：
-
-```powershell
-git clone https://github.com/gychen-NJU/bettergi-mcp
-# 然后设置 DSH_GAME_DAILY_BETTERGI_MCP=<clone 目录>\bettergi-mcp.mjs
-```
-
-下完脚本后点「注册 bettergi MCP」会把一条 `dsh-mcp-client` 配置**追加**到当前 profile 的 `cordis.patch.yml`（先备份成 `cordis.patch.yml.bak-gd-<时间戳>`，写后回读校验，已存在则不重复写），重启 DSH 生效。启用原神的排班并点「保存并应用」时，插件也会顺手下载脚本并完成注册。
-
-## bettergi-control 技能从哪来
-
-原神的日常执行由独立技能仓库 [`gychen-NJU/bettergi-control`](https://github.com/gychen-NJU/bettergi-control) 提供（`SKILL.md` + 15 个 `bgi-*.ps1`，也是纯 PowerShell）。插件同样**不捆绑**它：
-
-- 体检发现 `%USERPROFILE%\.agents\skills\bettergi-control\SKILL.md` 不存在（或脚本不足 10 个）时，面板给出「从 GitHub 安装 bettergi-control」按钮；
-- 点一下直接下载 zip、解压、校验、原子替换到技能目录（旧目录会备份成 `bettergi-control.bak-<时间戳>`），不需要开会话；
-- 也可以手动 clone：
-
-```powershell
-git clone https://github.com/gychen-NJU/bettergi-control "$env:USERPROFILE\.agents\skills\bettergi-control"
-```
-
-技能目录可用 `DSH_SKILLS_ROOT` 覆盖。
+- **bettergi-mcp**：面板体检直接判「已就位（插件自带）」；点「注册 bettergi MCP」只是把一条 `dsh-mcp-client` 配置追加到当前 profile 的 `cordis.patch.yml`（先备份成 `cordis.patch.yml.bak-gd-<时间戳>`，写后回读校验，已存在则不重复写），重启 DSH 生效——**不需要联网**。
+- **bettergi-control**：体检发现 `%USERPROFILE%\.agents\skills\bettergi-control\SKILL.md` 缺失（或脚本不足 10 个）时，面板给出「安装 bettergi-control（插件自带）」按钮；点一下就是**纯本地目录拷贝**（旧目录备份成 `bettergi-control.bak-<时间戳>`），**不联网**。技能目录可用 `DSH_SKILLS_ROOT` 覆盖。
+- 远程仓库 [`gychen-NJU/bettergi-mcp`](https://github.com/gychen-NJU/bettergi-mcp) 与 [`gychen-NJU/bettergi-control`](https://github.com/gychen-NJU/bettergi-control) 只作为**上游来源/更新通道**：只有当插件内的自带副本缺失（安装不完整）时，插件才会去 GitHub 取单文件（mcp）或 zip（skill）兜底。
+- 解析优先级（bettergi-mcp）：`DSH_GAME_DAILY_BETTERGI_MCP` 环境变量 → 状态目录 `vendor/`（手动覆盖/更新）→ **插件自带副本** → 同级 `dsh-betterGI` 工作区（开发机布局）。
+- 想自己 clone 更新也可以：`git clone https://github.com/gychen-NJU/bettergi-mcp`，然后 `DSH_GAME_DAILY_BETTERGI_MCP=<clone 目录>\bettergi-mcp.mjs`。
 
 ## 绝区零从哪来（一条龙）
 
 绝区零的画面识别与点击交给 [ZenlessZoneZero-OneDragon](https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon)（下称「一条龙」）。它在本机跑一个 HTTP 后端（默认 `http://127.0.0.1:23001`），插件自带一个**零依赖 MCP 服务器** `tools/zzz-od-mcp/zzz-od-mcp.mjs`，把这个后端包装成 agent 可调用的工具（`mcp__zzz-od__*`，12 个：health/status/window/applications/operations/enter/run_one_dragon/run_app/wait/stop/close_game/server）。
 
 - **随插件分发**：MCP 服务器、`automation/zzz-server.ps1`（提权启动/停止后端）、技能说明 `skills/zzz-od-control/SKILL.md` 都在插件包里，不需要额外从别的仓库拉取。
-- **一条龙本体仍需自装**：它是几百 MB 的 Python 应用（含 OCR/识别资源），插件只检测 `D:\software\ZenlessZoneZero-OneDragon`（可用 `DSH_GAME_DAILY_ZZZ_ROOT` 覆盖）是否存在 `.venv\Scripts\python.exe` 与 `src\zzz_od`。
+- **一条龙本体可一键自动安装**：体检里「绝区零一条龙」缺失时，点「让 DSH 修复」会自动 `git clone`（没有 git 就下 zip）+ `uv sync` + 写基础配置（`config/01/game.yml`、`game_account.yml`）。默认装到 `D:\software\ZenlessZoneZero-OneDragon`，**不会装进系统盘**；可用 `DSH_GAME_DAILY_ZZZ_ROOT` 指定别的位置（同样拒绝 C 盘）。首次安装要下几百 MB、耗时几分钟，按钮会一直显示「处理中…」。装完位置会记录到 `<stateDir>/zzz-root.txt`，后续体检与运行都以它为准。
 - **权限**：绝区零以管理员运行，切窗口/发输入需要**提权的一条龙后端**。体检里「一条龙后端」不在跑时给「启动一条龙后端（会弹一次 UAC）」按钮；真实运行前 runner 也会自动尝试启动。
 - **流程**：`zzz_health → zzz_window →（窗口无效时 zzz_enter）→ zzz_run_one_dragon → 循环 zzz_wait → zzz_status`；跑完插件自动关游戏、停后端。已知坑：游戏停在标题界面直接跑一条龙，第一个应用（邮件）会报「未能识别当前画面」，所以必须先 `zzz_enter` 进到「大世界-普通」。
 
 ## 依赖与边界
 
-- 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ bettergi-control 技能 + bettergi-mcp（见上）；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
+- 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ **随插件自带**的 bettergi-control 技能与 bettergi-mcp（见上）；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
 - 崩坏3 / 星铁：`game-daily` 家族技能 + 提权助手（坐标点击被拦时按技能说明改用 computer-use）。
-- 绝区零：ZenlessZoneZero-OneDragon（默认 `D:\software\ZenlessZoneZero-OneDragon`）+ 提权的一条龙后端；插件自带 MCP 与技能，游戏本体仍需自己安装。
+- 绝区零：ZenlessZoneZero-OneDragon（默认 `D:\software\ZenlessZoneZero-OneDragon`，缺失可一键自动安装）+ 提权的一条龙后端；插件自带 MCP 与技能，游戏本体仍需自己安装。
 - 没有「后台挂机」：原神必须可见且前台、16:9 ≥1920×1080；锁屏会失败。
 - 注册计划任务、跑 BetterGI 需要一次 UAC；面板会在按钮旁说明。
 - 账号风险由使用方式决定：官方条款把第三方软件/模拟操作列为封号理由之一，低调使用。

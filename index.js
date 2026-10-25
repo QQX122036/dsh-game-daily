@@ -24,6 +24,8 @@ import { buildInstallPrompt, buildReportPrompt } from './lib/prompt.mjs';
 import { openSession } from './lib/install.mjs';
 import { notify } from './lib/notify.mjs';
 import { resolveBettergiMcp, fetchBettergiMcp } from './lib/bettergi-mcp.mjs';
+import { installSkill } from './lib/skills.mjs';
+import { registerBettergiMcp } from './lib/mcp-register.mjs';
 import { resolveNodeExe } from './lib/nodeexe.mjs';
 
 export const name = 'game-daily';
@@ -378,14 +380,21 @@ export function apply(ctx) {
         skillsRoot: env.skillsRoot,
       });
       const started = startRegistration({ stateDir: env.stateDir, dryRun: body.dryRun === true });
-      // 原神启用时顺手补齐 bettergi-mcp（单文件，从独立仓库下载）；失败不阻断排班。
+      // 原神启用时顺手补齐 bettergi-mcp（单文件，从独立仓库下载）并注册到当前 profile；失败不阻断排班。
       let bettergiMcp = null;
+      let bettergiMcpRegistration = null;
       if (store.get().games.genshin?.enabled && !resolveBettergiMcp({ stateDir: env.stateDir })) {
         bettergiMcp = await fetchBettergiMcp({ stateDir: env.stateDir });
         if (bettergiMcp.ok) {
           store.mutate((state) => {
             state.deps = { ...(state.deps || {}), bettergiMcpPath: bettergiMcp.path };
           });
+        }
+      }
+      if (store.get().games.genshin?.enabled) {
+        const mcpScript = resolveBettergiMcp({ stateDir: env.stateDir });
+        if (mcpScript) {
+          bettergiMcpRegistration = registerBettergiMcp({ profile: env.profile, scriptPath: mcpScript, home: env.home });
         }
       }
       return {
@@ -396,10 +405,11 @@ export function apply(ctx) {
         scriptSync,
         registration: started,
         bettergiMcp,
+        bettergiMcpRegistration,
         note: body.dryRun === true
           ? '已写入排班并做了注册预演（未真正创建计划任务）。'
           : started.ok
-            ? `已写入排班并开始注册计划任务；需要管理员权限时会弹一次 UAC，稍后刷新看结果。${bettergiMcp && bettergiMcp.ok ? ' 已顺带下载 bettergi-mcp。' : ''}`
+            ? `已写入排班并开始注册计划任务；需要管理员权限时会弹一次 UAC，稍后刷新看结果。${bettergiMcp && bettergiMcp.ok ? ' 已顺带下载 bettergi-mcp。' : ''}${bettergiMcpRegistration && bettergiMcpRegistration.changed ? ' 已注册 bettergi MCP（重启 DSH 后生效）。' : ''}`
             : started.error,
       };
     },
@@ -462,11 +472,46 @@ export function apply(ctx) {
     'POST /install': async (req) => {
       await ready;
       const body = await readBody(req);
-      // 纯下载类动作不需要开会话：直接从 GitHub 取单文件服务器。
-      if (body.action === 'install-bettergi-mcp') {
-        const fetched = await fetchBettergiMcp({ stateDir: env.stateDir });
-        if (fetched.ok) store.mutate((state) => { state.deps = { ...(state.deps || {}), bettergiMcpPath: fetched.path }; });
-        return { ok: fetched.ok === true, action: body.action, ...fetched };
+      // 纯下载/安装类动作不需要开会话：直接从 GitHub 取（技能 zip / MCP 单文件）。
+      if (body.action === 'install-bettergi-skill') {
+        const installed = await installSkill('bettergi-control', { root: env.skillsRoot });
+        return {
+          ok: installed.ok === true,
+          action: body.action,
+          skill: installed,
+          note: installed.ok
+            ? `bettergi-control 已安装到 ${installed.path}${installed.scripts ? `（${installed.scripts} 个脚本）` : ''}。`
+            : installed.error,
+        };
+      }
+      if (body.action === 'install-bettergi-mcp' || body.action === 'fix-bettergi-mcp') {
+        let fetched = null;
+        if (body.action === 'install-bettergi-mcp' && !resolveBettergiMcp({ stateDir: env.stateDir })) {
+          fetched = await fetchBettergiMcp({ stateDir: env.stateDir });
+          if (fetched.ok) {
+            store.mutate((state) => {
+              state.deps = { ...(state.deps || {}), bettergiMcpPath: fetched.path };
+            });
+          }
+        }
+        const script = resolveBettergiMcp({ stateDir: env.stateDir });
+        let registered = { ok: false, error: '没找到 bettergi-mcp 脚本（先下载它）' };
+        if (script) registered = registerBettergiMcp({ profile: env.profile, scriptPath: script, home: env.home });
+        const parts = [];
+        if (fetched && fetched.ok) parts.push(`已下载 bettergi-mcp（${Math.round(fetched.bytes / 1024)} KB）`);
+        if (registered.ok) {
+          parts.push(registered.changed ? `已写入 ${registered.path}，重启 DSH 后生效` : '当前 profile 已注册 bettergi MCP');
+        } else {
+          parts.push(registered.error || '注册失败');
+        }
+        return {
+          ok: (fetched ? fetched.ok === true : true) && registered.ok === true,
+          action: body.action,
+          fetched,
+          registered,
+          restartRequired: registered.changed === true,
+          note: parts.join('；'),
+        };
       }
       const gameId = GAME_IDS.includes(body.game) ? body.game : '';
       const prompt = body.prompt || buildInstallPrompt({

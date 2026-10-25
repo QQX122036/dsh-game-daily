@@ -37,7 +37,7 @@ The agent will clone, install the bundle, verify activation, and use the built-i
 - **Game tabs**: Genshin Impact / Honkai Impact 3rd / Honkai: Star Rail / Zenless Zone Zero (paused, placeholder only).
 - **Daily-agent switch (off by default)**: schedule and run settings appear only after you turn it on. Edits stay in a local draft; nothing is written and no task is (re)created until you press **Save & Apply**.
 - **Schedule**: daily time, run days (every day / specific weekdays), timeout, mode (real run / dry-run diagnosis only), catch-up on missed runs, open a report session after each run, game path (Genshin can point at `BetterGI.exe`).
-- **Dependency check**: dsh CLI, DSH version, headless runner (including the credentials patch), computer-use plugin, skill files, coordinate calibration, elevation helper, BetterGI, bettergi MCP. Every missing item gets a **"Let DSH fix this"** button: the plugin opens a new DSH session with the repair steps (including backup/read-back requirements), hands it to Harness, and switches the UI to that session.
+- **Dependency check**: dsh CLI, DSH version, headless runner (including the credentials patch), computer-use plugin, skill files, coordinate calibration, elevation helper, BetterGI, the bettergi-control skill, the bettergi-mcp script, and the bettergi MCP registration. Every missing item gets a **"Let DSH fix it"** button: one-click items (download bettergi-mcp, install bettergi-control, register the MCP row) run directly and the button turns into **Working…**; multi-step or privileged repairs open a new DSH session with the repair steps (including backup/read-back requirements) and switch the UI to it.
 - **Run once / Stop / Disable all**: "Run once" uses the saved configuration; "Stop" kills that game's headless run; "Disable all" removes every scheduled task.
 - **Recent runs**: reads `report.json` (status, mode, steps, evidence, conclusion) plus the tail of stdout.
 
@@ -121,9 +121,25 @@ git clone https://github.com/gychen-NJU/bettergi-mcp
 # then set DSH_GAME_DAILY_BETTERGI_MCP=<clone dir>\bettergi-mcp.mjs
 ```
 
+After the script exists, **Register bettergi MCP** appends a `dsh-mcp-client` entry to the current profile's `cordis.patch.yml` (backed up as `cordis.patch.yml.bak-gd-<timestamp>`, read back and verified, and skipped when already present). Restart DSH to load it. Enabling the Genshin schedule and pressing **Save & apply** also downloads and registers it automatically.
+
+## Where the bettergi-control skill comes from
+
+Genshin's daily execution relies on a separate skill repository, [`gychen-NJU/bettergi-control`](https://github.com/gychen-NJU/bettergi-control) (`SKILL.md` + 15 `bgi-*.ps1` scripts, also pure PowerShell). The plugin does **not** bundle it either:
+
+- when `%USERPROFILE%\.agents\skills\bettergi-control\SKILL.md` is missing (or has fewer than 10 scripts), the panel shows **Install bettergi-control from GitHub**;
+- one click downloads the zip, extracts, verifies and atomically replaces the skill directory (the old one is backed up as `bettergi-control.bak-<timestamp>`), no session needed;
+- you can also clone it manually:
+
+```powershell
+git clone https://github.com/gychen-NJU/bettergi-control "$env:USERPROFILE\.agents\skills\bettergi-control"
+```
+
+The skill directory can be overridden with `DSH_SKILLS_ROOT`.
+
 ## Dependencies and boundaries
 
-- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.
+- Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + the bettergi-control skill + bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.
 - HI / SR: the `game-daily` skill family + the elevation helper (switch to computer-use per the skill docs when synthetic clicks are filtered).
 - There is **no background/AFK mode**: Genshin must be visible and in the foreground at 16:9 ≥ 1920×1080; a locked screen will fail.
 - Registering scheduled tasks and running BetterGI require one UAC confirmation; the panel says so next to the button.

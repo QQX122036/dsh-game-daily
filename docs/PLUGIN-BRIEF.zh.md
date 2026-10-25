@@ -43,7 +43,7 @@
 | 顶部游戏切换 | 四个 tab：原神 / 崩坏3 / 崩坏：星穹铁道 / 绝区零（占位并标注「暂停」） |
 | 逐游戏总开关 | **默认关闭**；关闭时只显示说明和「开启代理」，开启后才展开排班与执行设置 |
 | 每游戏排班 | 每天时间 `HH:MM`、执行日（每天 / 指定星期 1–7）、超时 5–180 分钟、错过补跑、模式（真实执行 / 演练） |
-| 依赖体检 | 逐项给出「就绪 / 可用但有风险 / 缺失 / 阻断」，每项可点「让 DSH 修这个」新开会话修，也可一键下载 bettergi-mcp |
+| 依赖体检 | 逐项给出「就绪 / 可用但有风险 / 缺失 / 阻断」，每项可点「让 DSH 修这个」：能自动做的（装 bettergi-control 技能、下载 bettergi-mcp、注册 MCP 配置）一键完成并显示「处理中…」，需要多步或提权的才新开会话修 |
 | 一键落地 | 「保存并应用」写入配置 → 生成 `automation/tasks.json` → 调提权脚本注册 Windows 计划任务（会弹一次 UAC） |
 | 到点自动跑 | 计划任务 → `automation/run-headless.mjs` → `dsh --profile headless` 按技能执行 → 写 `report.json` |
 | 结果汇报 | 插件每 60 秒 reconcile：记账、Windows 通知（toast）、按开关在 DSH 里开一个「游戏日常 · <游戏> 汇报」会话 |
@@ -61,7 +61,7 @@
 1. DSH 设置 → 左侧「游戏日常」。
 2. 顶部切到「原神」→ 看到开关默认关、说明文案。
 3. 点「开启代理」→ 出现排班卡与按钮组。
-4. 往下看「依赖体检」：dsh CLI、DSH 版本、headless 运行器、computer-use、技能、坐标校准、提权助手、BetterGI、bettergi-mcp 脚本、bettergi-mcp 注册——全绿。
+4. 往下看「依赖体检」：dsh CLI、DSH 版本、headless 运行器、computer-use、技能、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi-mcp 注册——全绿。
 5. 设时间（例：11:00）→ 点「保存并应用」→ Windows 弹一次 UAC → 计划任务 `game-daily-genshin` 就绪。
 6. 切到崩坏3 / 星铁，各自重复（它们用技能 + 提权助手或 computer-use，不走 BetterGI）。
 7. 关掉设置页。之后每天到点自动发生。
@@ -91,7 +91,7 @@
   - 提示：真实模式本轮结束后自动关闭游戏；下一款开始前先确保上一款已退出。
   - 游戏路径（可选）：`D:\software\BetterGI\BetterGI.exe`。
   - 任务状态：尚未创建计划任务 / 下次运行时间 / 上次结果。
-- 依赖体检：每项一行，左侧 badge（就绪 / 可用但有风险 / 缺失），右侧「让 DSH 修这个」；顶部有「重新体检」。
+- 依赖体检：每项一行，左侧 badge（就绪 / 可用但有风险 / 缺失），右侧「让 DSH 修这个」；点下去按钮变「处理中…」；顶部有「重新体检」。
 - 最近运行：列表（运行号、状态、时间），点开是报告弹层（JSON + stdout 尾部）。
 - 底部提示（红色小字）：`立即运行使用已保存的设置；改完排班记得先「保存并应用」。`
 
@@ -138,7 +138,7 @@
 
 ### 原神（engine = bettergi）
 
-- 依赖：BetterGI（默认 `D:\software\BetterGI`）+ bettergi-mcp（MCP 服务器，29 个工具）。
+- 依赖：BetterGI（默认 `D:\software\BetterGI`）+ bettergi-control 技能 + bettergi-mcp（MCP 服务器，29 个工具）。
 - 流程：`bgi_doctor` → `bgi_status` → `bgi_focus_game`（还原窗口并置前）→ `bgi_run_one_dragon {config:"日常"}` → `bgi_watch` → `bgi_results`。
 - 一条龙 6 个任务（来自 `User\OneDragon\日常.json` 的 TaskOrder）：
   1. 领取邮件
@@ -195,12 +195,12 @@
 | GET | `/state` | 面板全量状态（games 是**数组**，含 task 的下次运行/状态） |
 | GET | `/probe?games=genshin,hi` | 依赖体检（含逐项 fix 动作） |
 | POST | `/ui` | 保存 UI 级设置（lastGame / reportSessions / foregroundGuard） |
-| POST | `/apply` | 保存排班 + 写 tasks.json + 开始注册（支持 `dryRun`）；原神启用时顺手下载 bettergi-mcp |
+| POST | `/apply` | 保存排班 + 写 tasks.json + 开始注册（支持 `dryRun`）；原神启用时顺手下载 bettergi-mcp 并注册 MCP 行 |
 | POST | `/disable` | 关闭全部代理并删除计划任务（一次 UAC） |
 | POST | `/run` | 立即运行一次 `{game, mode?, trigger?}` |
 | POST | `/stop` | 停止某游戏的在跑实例（停守护 + taskkill） |
 | POST | `/run-task` | 直接触发已注册的 Windows 计划任务 |
-| POST | `/install` | 开修复会话；`{action:'install-bettergi-mcp'}` 时改为直接下载（不建会话） |
+| POST | `/install` | 一键修复：`install-bettergi-skill`（下载 zip 装技能）、`install-bettergi-mcp`（下载+注册）、`fix-bettergi-mcp`（只注册）；其它 action 开修复会话 |
 | GET | `/runs?game=` | 运行历史列表 |
 | GET | `/run?game=&runId=` | 单轮报告 + stdout 尾部 |
 | POST | `/reconcile` | 手动触发一次对账（调试用） |
@@ -213,13 +213,15 @@
 2. **为什么 headless 而不是桌面会话？** 不占用界面、可无人值守；靠 `--patch` overlay 给原神注入 bettergi MCP；靠 `DSH_PERMISSION_MODE=danger-full-access` 让审批不打断。风险由此而来，所以安全红线写进 prompt（不点付费礼包、不删除/重置、只对目标窗口发输入、同坐标两次无变化就停）。
 3. **为什么不改 BetterGI 配置？** BetterGI 运行中会把内存里的配置回写覆盖；插件只调用 `bgi_*` 工具/CLI，不写它的配置文件。
 4. **为什么 bettergi-mcp 要单独发仓库、按需下载？** 它是可复用的独立服务器（92KB 单文件、零依赖），塞进插件包会让两边升级互相拖累。插件按 `env → vendor 下载副本 → 同级工作区` 解析，缺失时按钮一键补。
+
+5. **为什么 bettergi-control 技能也单独发仓库？** 同一个理由：技能是用户自己的、也会独立演进（15 个脚本）；插件只负责「缺了就从 GitHub 装」，不把 19 个文件复制进插件包。安装走 zip 下载 + 校验 + 原子替换，旧版本自动备份。
 5. **为什么没人值守还要能「停」？** 计划任务是 `InteractiveToken + RunLevel Highest`；插件进程非提权杀不掉提权子进程，所以停止走「写标志 + 计划任务侧 taskkill」。
 6. **为什么有「演练模式」？** 第一次配置时最需要验证的是链路（headless 能不能起来、MCP 有没有、窗口够不够大），不是游戏本身；dry 只读诊断、照常写报告。
 7. **为什么默认关闭？** 这是会操作游戏、要弹 UAC、有封号话题的功能，默认必须是关的，用户点开才生效。
 
 ---
 
-## 11. 前置依赖与体检项（10 项，原神）
+## 11. 前置依赖与体检项（11 项，原神）
 
 | id | 检查 | 缺失时 |
 | --- | --- | --- |
@@ -227,14 +229,15 @@
 | `dsh-version` | ≥ 0.2.1-rc.2 | 警告（升级） |
 | `headless` | headless profile 存在 + credentials 已启用 | 阻断（修 patch） |
 | `computer-use` | `dsh-computer-use-win` 已装 | 警告（安装插件） |
-| `skills` | `game-daily` / `game-daily-hi` / `game-daily-sr` / `bettergi-control` 的 SKILL.md | 阻断（恢复技能） |
+| `skills` | `game-daily` / `game-daily-hi` / `game-daily-sr` 的 SKILL.md | 阻断（恢复技能） |
 | `calibration` | 技能引擎游戏有 `state/coords.local.json` | 警告（校准） |
 | `helper` | 提权助手 `state/helper.pid` 存活 | 阻断（启动助手，一次 UAC） |
 | `bettergi` | BetterGI 安装位置与版本 | 警告（安装/改路径） |
+| `bettergi-skill` | bettergi-control 技能（`SKILL.md` + ≥10 个脚本） | 阻断（**一键从 GitHub 装技能**） |
 | `bettergi-mcp` | MCP 服务器脚本是否就位 | 警告（**一键从 GitHub 下载**） |
-| `bettergi-mcp-registered` | 当前 profile 是否声明 bettergi MCP | 警告（开修复会话补一行） |
+| `bettergi-mcp-registered` | 当前 profile 是否声明 bettergi MCP | 警告（**一键写入 profile 补丁**，重启生效） |
 
-崩3/星铁只检查前 7 项里适用的部分（不查 BetterGI 两项）。
+崩3/星铁只检查前 7 项里适用的部分（不查 BetterGI 三项）。
 
 ---
 
@@ -253,11 +256,11 @@
 
 ## 13. 已完成的验证（可以当作「真做过」的证据）
 
-- 插件版本 `0.1.0`，MIT；`node test/smoke.mjs` → **11/11 PASS**（含状态原子写回读、prompt 构造、dsh 解析、依赖体检、计划任务 XML 解析、前台守护资产 BOM、bettergi-mcp 解析）。
+- 插件版本 `0.1.0`，MIT；`node test/smoke.mjs` → **14/14 PASS**（含状态原子写回读、prompt 构造、dsh 解析、依赖体检、计划任务 XML 解析、前台守护资产 BOM、bettergi-mcp 解析、技能安装 guard、MCP 注册幂等）。
 - 真实注册：`/apply` 触发一次 UAC，`register-result.json` 返回 `created`；`Get-ScheduledTask 'game-daily-dev-genshin'` → `Ready`，触发器每天 11:00、`RunLevel Highest`、`WakeToRun`。
 - 端到端：手动 `Start-ScheduledTask` → headless 会话真实执行 → `runs/genshin/20261024-022625/report.json`（`status:"partial"`，12 步 12 条证据，含截图）；任务结束 `LastTaskResult=0`；通知写出「原神 日常：部分完成 …」；`state.json` 记账。
 - 桌面端：`plugin_manager install_bundle` 成功，设置页出现「游戏日常」，客户端 slot `{id:"game-daily", order:35, active:true}`。
-- 依赖体检（本机）：10 项 0 阻断（崩3 坐标校准为 warn）。
+- 依赖体检（本机）：11 项 0 阻断（崩3 坐标校准为 warn）。
 - 本机当前排班：原神 11:00、崩坏3 10:00、星铁 10:30（均为每天、真实执行）；旧的 `BetterGI 日常一条龙` 已停用，DSH 原生「崩坏3+星铁 每日日常」日程已删除，避免重复执行。
 
 ---
@@ -273,6 +276,7 @@
 - 装完**重启一次桌面端**（首次安装），之后设置页生效。
 
 配套 MCP：<https://github.com/gychen-NJU/bettergi-mcp>（原神用；插件缺它时可一键下载，故不必手动装）。
+配套技能：<https://github.com/gychen-NJU/bettergi-control>（原神日常执行用；插件缺它时可一键安装）。
 
 ---
 
@@ -284,7 +288,7 @@
 | --- | --- | --- |
 | 1 | 设置页「游戏日常」全貌 | DSH → 设置 → 游戏日常，截全窗口 |
 | 2 | 开关默认关 → 点「开启代理」 | 点一下，录下状态从「已关闭」到「已开启」+ 排班展开 |
-| 3 | 依赖体检 10 项 | 点「重新体检」，等进度完成 |
+| 3 | 依赖体检 11 项 | 点「重新体检」，等进度完成 |
 | 4 | 排班卡（时间/星期/超时/模式/补跑/汇报/前台守护/游戏路径/任务状态） | 滚到卡片，逐项 hover |
 | 5 | 「保存并应用」+ UAC | 录 UAC 弹窗（注意遮挡用户名） |
 | 6 | 任务计划程序里的 `game-daily-*` | `taskschd.msc`，点开「触发器/操作」 |
@@ -342,6 +346,7 @@
 
 - 插件：`dsh-game-daily` 0.1.0 · MIT · <https://github.com/gychen-NJU/dsh-game-daily>
 - 配套 MCP：`bettergi-mcp` 1.0.0 · <https://github.com/gychen-NJU/bettergi-mcp>
+- 配套技能：`bettergi-control` · <https://github.com/gychen-NJU/bettergi-control>
 - 设置页位置：设置 → 游戏日常（「用量统计」与「喵记忆」之间）
 - 状态目录：`%USERPROFILE%\.dsh\game-daily\`
 - 计划任务名：`game-daily-genshin` / `game-daily-hi` / `game-daily-sr`

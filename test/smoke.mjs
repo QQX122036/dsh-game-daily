@@ -11,6 +11,8 @@ import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } fr
 import { queryTasks, taskStatus, refreshTaskInfo, readTaskDefinition, computeNextRun } from '../lib/tasks.mjs';
 import { guardScriptPath, guardStatus } from '../lib/runner.mjs';
 import { resolveBettergiMcp, vendorPath } from '../lib/bettergi-mcp.mjs';
+import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill } from '../lib/skills.mjs';
+import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
 
 const results = [];
@@ -19,6 +21,15 @@ const refreshed = await refreshTaskInfo(['BetterGI 日常一条龙']).catch(() =
 function check(name, fn) {
   try {
     const detail = fn();
+    results.push({ name, ok: true, detail });
+  } catch (error) {
+    results.push({ name, ok: false, detail: String((error && error.stack) || error) });
+  }
+}
+
+async function checkAsync(name, fn) {
+  try {
+    const detail = await fn();
     results.push({ name, ok: true, detail });
   } catch (error) {
     results.push({ name, ok: false, detail: String((error && error.stack) || error) });
@@ -106,7 +117,7 @@ Promise.resolve()
       results[2].detail = String((error && error.stack) || error);
     }
   })
-  .then(() => {
+  .then(async () => {
     check('dsh resolve', () => {
       const dsh = resolveDsh();
       if (!dsh) throw new Error('找不到 dsh CLI');
@@ -160,6 +171,45 @@ Promise.resolve()
         if (Array.isArray(closed.closed) && closed.closed.length) throw new Error('没运行却报告关掉了进程');
       }
       return keys.map((id) => `${id}:${running[id] ? 'running' : 'idle'}`).join(' ');
+    });
+    await checkAsync('skill install helpers', async () => {
+      const spec = SKILL_REPOS['bettergi-control'];
+      if (!spec || !/^https:\/\/codeload\.github\.com\//.test(spec.zip)) throw new Error('缺少 bettergi-control 的 zip 地址');
+      if (!spec.minScripts || spec.minScripts < 10) throw new Error('脚本数下限不合理');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-skill-'));
+      try {
+        const info = inspectSkill(root, 'bettergi-control');
+        if (info.installed) throw new Error('空目录不应判定已安装');
+        if (skillInstallPath(root, 'bettergi-control') !== info.dir) throw new Error('skillInstallPath 与 inspectSkill 不一致');
+        const missing = await installSkill('bettergi-control', { root: '' });
+        if (missing.ok !== false || !missing.error) throw new Error('缺 root 应返回错误');
+        return `zip ok, inspect ok, guard ok`;
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+    check('mcp register', () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-home-'));
+      try {
+        const dir = path.join(home, 'profiles', 'test');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = bettergiMcpPatchPath('test', home);
+        fs.writeFileSync(file, '- insert: []\n', 'utf8');
+        const fake = path.join(home, 'vendor', 'bettergi-mcp', 'bettergi-mcp.mjs');
+        fs.mkdirSync(path.dirname(fake), { recursive: true });
+        fs.writeFileSync(fake, '// stub\n', 'utf8');
+        const first = registerBettergiMcp({ profile: 'test', scriptPath: fake, home });
+        if (!first.ok || first.changed !== true) throw new Error(`首次注册应写入：${JSON.stringify(first)}`);
+        const text = fs.readFileSync(file, 'utf8');
+        if (!hasBettergiMcpRow(text)) throw new Error('写入后回读缺 bettergi MCP 行');
+        if (!/serverName: bettergi/.test(text) || !/command: node/.test(text)) throw new Error('补丁内容不完整');
+        if (first.backup && !fs.existsSync(first.backup)) throw new Error('缺少备份文件');
+        const second = registerBettergiMcp({ profile: 'test', scriptPath: fake, home });
+        if (!second.ok || second.changed !== false) throw new Error('重复注册不应再写');
+        return 'patch append + idempotent + backup ok';
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
     });
     check('task info refresh', () => {
       if (refreshed !== true) return '未刷新（无任务或 PowerShell 不可用，容忍）';

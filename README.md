@@ -37,7 +37,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 - **顶部游戏页签**：原神 / 崩坏3 / 崩坏：星穹铁道 / 绝区零（后者暂停，仅占位说明）。
 - **代理日常开关（默认关）**：打开后才出现排班与执行设置；改动先落在本地草稿，点「保存并应用」才写盘并重建计划任务。
 - **排班**：每天时间、执行日（每天 / 指定星期）、超时、模式（真实执行 / 演练只诊断）、错过补跑、跑完开一个会话汇报、游戏路径（原神可指定 `BetterGI.exe`）。
-- **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi MCP。缺任何一项都给出「让 DSH 修这个」按钮：插件会新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
+- **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi MCP 注册。缺任何一项都给出「让 DSH 修这个」按钮：能自动做的（下载 bettergi-mcp、安装 bettergi-control、注册 MCP 配置）点一下直接做，按钮会变成「处理中…」；需要多步操作或权限的才新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
 - **立即运行一次 / 停止 / 关闭全部代理**：立即运行走「已保存」的配置；停止会杀掉该游戏的 headless 运行进程；关闭全部代理会移除所有计划任务。
 - **最近运行**：读取 `report.json`（状态、模式、步骤、证据、结论）与 stdout 尾部。
 
@@ -83,7 +83,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | POST | `/run` | 立即运行一次：`{game, mode:'real'|'dry'}` |
 | POST | `/stop` | 停止该游戏的运行进程 |
 | POST | `/run-task` | 立刻触发已注册的计划任务（由任务管理器跑，而不是插件直启） |
-| POST | `/install` | 生成修复会话：`{check:'bettergi'}` 或 `{action:'fix-headless-credentials'}` |
+| POST | `/install` | 修复动作：`{action:'install-bettergi-skill'}` 装技能、`{action:'install-bettergi-mcp'}` 下载+注册、`{action:'fix-bettergi-mcp'}` 只注册；其它 action 生成修复会话 |
 | GET | `/runs?game=genshin` | 历史运行摘要 |
 | GET | `/run?id=<runId>` | 单次运行的 report/meta/stdout 全文 |
 | POST | `/reconcile` | 手动触发一次对账（平时每 60s 自动跑） |
@@ -121,9 +121,25 @@ git clone https://github.com/gychen-NJU/bettergi-mcp
 # 然后设置 DSH_GAME_DAILY_BETTERGI_MCP=<clone 目录>\bettergi-mcp.mjs
 ```
 
+下完脚本后点「注册 bettergi MCP」会把一条 `dsh-mcp-client` 配置**追加**到当前 profile 的 `cordis.patch.yml`（先备份成 `cordis.patch.yml.bak-gd-<时间戳>`，写后回读校验，已存在则不重复写），重启 DSH 生效。启用原神的排班并点「保存并应用」时，插件也会顺手下载脚本并完成注册。
+
+## bettergi-control 技能从哪来
+
+原神的日常执行由独立技能仓库 [`gychen-NJU/bettergi-control`](https://github.com/gychen-NJU/bettergi-control) 提供（`SKILL.md` + 15 个 `bgi-*.ps1`，也是纯 PowerShell）。插件同样**不捆绑**它：
+
+- 体检发现 `%USERPROFILE%\.agents\skills\bettergi-control\SKILL.md` 不存在（或脚本不足 10 个）时，面板给出「从 GitHub 安装 bettergi-control」按钮；
+- 点一下直接下载 zip、解压、校验、原子替换到技能目录（旧目录会备份成 `bettergi-control.bak-<时间戳>`），不需要开会话；
+- 也可以手动 clone：
+
+```powershell
+git clone https://github.com/gychen-NJU/bettergi-control "$env:USERPROFILE\.agents\skills\bettergi-control"
+```
+
+技能目录可用 `DSH_SKILLS_ROOT` 覆盖。
+
 ## 依赖与边界
 
-- 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ bettergi-mcp（见上）；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
+- 原神：BetterGI（默认 `D:\software\BetterGI`，可在面板里改）+ bettergi-control 技能 + bettergi-mcp（见上）；BetterGI 没有 HTTP API，只能命令行/配置组驱动。
 - 崩坏3 / 星铁：`game-daily` 家族技能 + 提权助手（坐标点击被拦时按技能说明改用 computer-use）。
 - 没有「后台挂机」：原神必须可见且前台、16:9 ≥1920×1080；锁屏会失败。
 - 注册计划任务、跑 BetterGI 需要一次 UAC；面板会在按钮旁说明。

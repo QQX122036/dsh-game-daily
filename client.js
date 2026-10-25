@@ -49,8 +49,11 @@ window.__ModuleLoader__.load({
         viewReport: '查看报告',
         close: '关闭',
         fix: '让 DSH 修这个',
+        fixing: '处理中…',
         fixed: '已打开修复会话，回到这里点「重新体检」。',
         bettergiMcpDownloaded: 'bettergi-mcp 已下载到插件的 vendor 目录。',
+        skillInstalled: 'bettergi-control 技能已安装。',
+        mcpRegistered: 'bettergi MCP 已写入当前 profile，重启 DSH 后生效。',
         applied: '已保存并提交注册；弹 UAC 时请点允许。',
         saved: '已保存',
         dirty: '有改动，待应用',
@@ -111,8 +114,11 @@ window.__ModuleLoader__.load({
         viewReport: 'View report',
         close: 'Close',
         fix: 'Let DSH fix it',
+        fixing: 'Working…',
         fixed: 'Fix session opened. Come back and re-check.',
         bettergiMcpDownloaded: 'bettergi-mcp downloaded into the plugin vendor directory.',
+        skillInstalled: 'bettergi-control skill installed.',
+        mcpRegistered: 'bettergi MCP written into the current profile; restart DSH to load it.',
         applied: 'Saved and registration started; approve the UAC prompt if shown.',
         saved: 'Saved',
         dirty: 'Unsaved changes',
@@ -279,7 +285,7 @@ window.__ModuleLoader__.load({
     }
 
     function GamePanel(props) {
-      const { t, game, state, draft, dirty, setField, save, disableAll, runNow, stopRun, toggleDay, refreshProbe, probe, probeLoading, busy, openReport, message } = props;
+      const { t, game, state, draft, dirty, setField, save, disableAll, runNow, stopRun, toggleDay, refreshProbe, probe, probeLoading, busy, openReport, message, fixing } = props;
       const [reportSession, setReportSession] = React.useState(state && state.ui ? state.ui.reportSessions !== false : true);
       React.useEffect(() => {
         setReportSession(state && state.ui ? state.ui.reportSessions !== false : true);
@@ -455,8 +461,9 @@ window.__ModuleLoader__.load({
                     ),
                     check.fix ? h('button', {
                       className: 'gd-btn',
+                      disabled: fixing === check.id,
                       onClick: () => props.fixDependency(check),
-                    }, t('fix')) : null
+                    }, fixing === check.id ? t('fixing') : t('fix')) : null
                   ),
                   h('div', { className: 'gd-detail' }, check.detail || '')
                 )
@@ -512,6 +519,7 @@ window.__ModuleLoader__.load({
       const [probe, setProbe] = React.useState({});
       const [probeLoading, setProbeLoading] = React.useState(false);
       const [busy, setBusy] = React.useState('');
+      const [fixing, setFixing] = React.useState('');
       const [message, setMessage] = React.useState('');
       const [report, setReport] = React.useState(null);
 
@@ -654,7 +662,9 @@ window.__ModuleLoader__.load({
 
       const fixDependency = async (check) => {
         const fix = check.fix || {};
-        setMessage('');
+        if (fixing) return;
+        setFixing(check.id);
+        setMessage(t('fixing'));
         try {
           const value = await api('/install', {
             method: 'POST',
@@ -674,14 +684,25 @@ window.__ModuleLoader__.load({
               /* 打不开就只提示 */
             }
           }
-          if (value.ok === true && !value.sessionId && value.action === 'install-bettergi-mcp') {
-            setMessage(`${t('bettergiMcpDownloaded')}${value.bytes ? ` (${Math.round(value.bytes / 1024)} KB)` : ''}`);
-            await load(true);
-            return;
+          if (value.ok === true && !value.sessionId) {
+            const action = String(value.action || '');
+            if (action === 'install-bettergi-mcp' || action === 'fix-bettergi-mcp') {
+              setMessage(value.note || t('mcpRegistered'));
+              await load(true);
+              await refreshProbe(tab);
+              return;
+            }
+            if (action === 'install-bettergi-skill') {
+              setMessage(value.note || t('skillInstalled'));
+              await refreshProbe(tab);
+              return;
+            }
           }
           setMessage(`${t('fixed')}${value.sessionId ? ` (session ${value.sessionId.slice(0, 8)}…)` : ''}`);
         } catch (err) {
           setMessage(`${t('error')}: ${String(err.message || err)}`);
+        } finally {
+          setFixing('');
         }
       };
 
@@ -730,6 +751,7 @@ window.__ModuleLoader__.load({
                 probeLoading,
                 refreshProbe: () => refreshProbe(tab),
                 fixDependency,
+                fixing,
                 busy,
                 message,
                 openReport: setReport,

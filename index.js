@@ -28,6 +28,7 @@ import { installSkill } from './lib/skills.mjs';
 import { registerBettergiMcp } from './lib/mcp-register.mjs';
 import { resolveNodeExe } from './lib/nodeexe.mjs';
 import { ensureZzzServer, installZzzOneDragon } from './lib/zzz.mjs';
+import { checkForUpdate, applyUpdate, readLocalVersion } from './lib/update.mjs';
 
 export const name = 'game-daily';
 export const inject = ['webServer'];
@@ -209,6 +210,7 @@ export function apply(ctx) {
     return {
       ok: true,
       now: new Date().toISOString(),
+      version: readLocalVersion(),
       profile: env.profile,
       dev: { devMode: env.devMode, stateDir: env.stateDir, taskPrefix: env.taskPrefix, pluginRoot: PLUGIN_ROOT },
       skillsRoot: env.skillsRoot,
@@ -615,6 +617,19 @@ export function apply(ctx) {
         stdoutTail = '';
       }
       return { ok: true, game: gameId, runId, dir, report, meta, stdoutTail };
+    },
+
+    'GET /update': async (req, url) => {
+      await ready;
+      const force = url.searchParams.get('force') === '1' || url.searchParams.get('force') === 'true';
+      return checkForUpdate({ force });
+    },
+
+    'POST /update': async () => {
+      await ready;
+      const result = await applyUpdate({ pluginRoot: PLUGIN_ROOT });
+      logger.log(`更新插件：${result.ok ? '成功' : '失败'} ${result.from || ''}→${result.to || ''}${result.error ? ` (${result.error})` : ''}`);
+      return result;
     },
 
     'POST /reconcile': async () => {

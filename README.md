@@ -1,4 +1,4 @@
-﻿# dsh-game-daily · 游戏日常
+# dsh-game-daily · 游戏日常
 
 **简体中文** | [English](README.en.md)
 
@@ -88,6 +88,8 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | POST | `/install` | 修复动作：`{action:'install-bettergi-skill'}` 装技能、`{action:'install-bettergi-mcp'}` 下载+注册、`{action:'fix-bettergi-mcp'}` 只注册；其它 action 生成修复会话 |
 | GET | `/runs?game=genshin` | 历史运行摘要 |
 | GET | `/run?id=<runId>` | 单次运行的 report/meta/stdout 全文 |
+| GET | `/update` | 检查更新：返回 `{current, latest, hasUpdate, repo, releases, checkedAt}`（30 分钟缓存，`?force=1` 强制刷新） |
+| POST | `/update` | 立即更新：有 `.git` 走 `git pull --ff-only`，否则下载 zip 覆盖；返回 `{from, to, method, restartRequired}` |
 | POST | `/reconcile` | 手动触发一次对账（平时每 60s 自动跑） |
 
 ## 数据位置
@@ -131,6 +133,15 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 - **一条龙本体可一键自动安装**：体检里「绝区零一条龙」缺失时，点「让 DSH 修复」会自动 `git clone`（没有 git 就下 zip）+ `uv sync` + 写基础配置（`config/01/game.yml`、`game_account.yml`）。默认装到 `D:\software\ZenlessZoneZero-OneDragon`，**不会装进系统盘**；可用 `DSH_GAME_DAILY_ZZZ_ROOT` 指定别的位置（同样拒绝 C 盘）。首次安装要下几百 MB、耗时几分钟，按钮会一直显示「处理中…」。装完位置会记录到 `<stateDir>/zzz-root.txt`，后续体检与运行都以它为准。
 - **权限**：绝区零以管理员运行，切窗口/发输入需要**提权的一条龙后端**。体检里「一条龙后端」不在跑时给「启动一条龙后端（会弹一次 UAC）」按钮；真实运行前 runner 也会自动尝试启动。
 - **流程**：`zzz_health → zzz_window →（窗口无效时 zzz_enter）→ zzz_run_one_dragon → 循环 zzz_wait → zzz_status`；跑完插件自动关游戏、停后端。已知坑：游戏停在标题界面直接跑一条龙，第一个应用（邮件）会报「未能识别当前画面」，所以必须先 `zzz_enter` 进到「大世界-普通」。
+
+## 自动更新
+
+设置页顶部有一条版本栏：**打开面板时会自动去 GitHub 读最新的 `package.json`**，和本地版本比对。
+
+- 远端更新时，版本栏变黄并显示「发现新版本 vX.Y.Z」，右侧出现 **立即更新** / 稍后 / 查看更新说明；点「立即更新」直接升级（有 `.git` 的安装走 `git pull --ff-only`，没有 git 则下载 zip 覆盖，只覆盖插件文件，不动 `node_modules` 与用户数据）。
+- 已是最新时只显示「版本 vX.Y.Z · 已是最新版本」，右边是「检查更新」（30 分钟缓存，点一下强制刷新）。
+- 更新写盘后需要**重启 DSH 桌面端**才会加载新代码（计划任务每轮新起 node 进程，不受影响）。
+- 版本比较支持 `x.y.z` 与 `x.y.z-pre`（prerelease 视为更小）；检查失败不弹错，只在版本栏提示「检查更新失败」。
 
 ## 依赖与边界
 

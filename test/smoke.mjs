@@ -1,4 +1,4 @@
-﻿// 冒烟测试：不碰游戏、不建计划任务，只验证模块能加载、纯函数与读操作正常。
+// 冒烟测试：不碰游戏、不建计划任务，只验证模块能加载、纯函数与读操作正常。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,7 @@ import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill, bundledSkill
 import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
 import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot } from '../lib/zzz.mjs';
+import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -368,6 +369,26 @@ Promise.resolve()
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
+    });
+    await checkAsync('update helpers', async () => {
+      const cases = [
+        ['0.2.0', '0.2.0', 0],
+        ['0.3.0', '0.2.0', 1],
+        ['0.2.9', '0.2.10', -1],
+        ['v0.3.0', '0.3.0', 0],
+        ['0.3.0-beta.1', '0.3.0', -1],
+        ['0.3.0', '0.3.0-beta.2', 1],
+      ];
+      for (const [a, b, expected] of cases) {
+        const actual = compareVersions(a, b);
+        if (actual !== expected) throw new Error(`compareVersions(${a}, ${b}) = ${actual}，应为 ${expected}`);
+      }
+      const pkg = readPackage();
+      if (!/^\d+\.\d+\.\d+/.test(String(pkg.version || ''))) throw new Error(`package.json 版本不合法：${pkg.version}`);
+      const local = readLocalVersion();
+      if (local !== pkg.version) throw new Error(`本地版本读取不一致：${local} vs ${pkg.version}`);
+      if (compareVersions('9.9.9', local) <= 0) throw new Error('远端更高版本应判定为有更新');
+      return `local=${local}`;
     });
     for (const item of results) console.log(`${item.ok ? 'PASS' : 'FAIL'}  ${item.name}  ${item.detail}`);
     exitCode = results.some((item) => !item.ok) ? 1 : 0;

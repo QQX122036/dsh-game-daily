@@ -73,6 +73,18 @@ window.__ModuleLoader__.load({
         error: '出错了',
         taskRegistered: '计划任务已注册',
         taskMissing: '计划任务未注册',
+        versionLabel: '版本',
+        updateFound: '发现新版本',
+        updateBody: '远程 v{latest} · 当前 v{current}',
+        updateNow: '立即更新',
+        updateLater: '稍后',
+        updateNotes: '查看更新说明',
+        updateChecking: '检查更新…',
+        updateRunning: '正在更新…',
+        updateDone: '已更新到 v{version}，重启 DSH 后生效',
+        updateIsLatest: '已是最新版本',
+        updateFailed: '检查更新失败',
+        updateRestartHint: '更新完成后需要重启 DSH 桌面端才能加载新代码。',
       },
       en: {
         nav: 'Game Daily',
@@ -141,6 +153,18 @@ window.__ModuleLoader__.load({
         error: 'Error',
         taskRegistered: 'Task registered',
         taskMissing: 'Task missing',
+        versionLabel: 'Version',
+        updateFound: 'Update available',
+        updateBody: 'Remote v{latest} · current v{current}',
+        updateNow: 'Update now',
+        updateLater: 'Later',
+        updateNotes: 'Release notes',
+        updateChecking: 'Checking…',
+        updateRunning: 'Updating…',
+        updateDone: 'Updated to v{version}. Restart DSH to load it.',
+        updateIsLatest: 'You are on the latest version',
+        updateFailed: 'Update check failed',
+        updateRestartHint: 'Restart the DSH desktop app after updating to load the new code.',
       },
     };
 
@@ -187,6 +211,14 @@ window.__ModuleLoader__.load({
       '.gd-hint{font-size:12px;color:#d97706}',
       '.gd-section-title{font-size:13px;font-weight:600;margin:0 0 2px}',
       '.gd-empty{font-size:12.5px;color:var(--dsw-alias-label-tertiary,inherit)}',
+      '.gd-update{border:1px solid var(--dsw-alias-border-l2,#8883);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:6px;background:var(--dsw-alias-bg-overlay,#8881)}',
+      '.gd-update[data-tone="warn"]{border-color:#d9770666;background:#d9770612}',
+      '.gd-update-head{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}',
+      '.gd-update-title{font-size:13.5px;font-weight:600;margin:0}',
+      '.gd-update-body{font-size:12px;margin:0;color:var(--dsw-alias-label-secondary,inherit)}',
+      '.gd-update-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.gd-version{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-tertiary,inherit)}',
+      '.gd-link{appearance:none;border:0;background:none;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}',
     ].join('\n');
 
     const DAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
@@ -528,6 +560,39 @@ window.__ModuleLoader__.load({
       const [fixing, setFixing] = React.useState('');
       const [message, setMessage] = React.useState('');
       const [report, setReport] = React.useState(null);
+      const [update, setUpdate] = React.useState(null);
+      const [updateBusy, setUpdateBusy] = React.useState('');
+      const [updateHidden, setUpdateHidden] = React.useState(false);
+
+      const checkUpdate = async (force) => {
+        try {
+          const value = await api(`/update${force ? '?force=1' : ''}`);
+          setUpdate(value);
+        } catch (err) {
+          setUpdate({ ok: false, hasUpdate: false, error: String(err.message || err) });
+        }
+      };
+
+      React.useEffect(() => {
+        checkUpdate(false);
+      }, []);
+
+      const runUpdate = async () => {
+        if (updateBusy) return;
+        setUpdateBusy('update');
+        setMessage('');
+        try {
+          const value = await api('/update', { method: 'POST', body: '{}' });
+          setUpdateHidden(true);
+          setMessage(t('updateDone').replace('{version}', value.to || ''));
+          await checkUpdate(true);
+          await load(true);
+        } catch (err) {
+          setMessage(`${t('error')}: ${String(err.message || err)}`);
+        } finally {
+          setUpdateBusy('');
+        }
+      };
 
       const load = async (silent) => {
         try {
@@ -730,6 +795,35 @@ window.__ModuleLoader__.load({
         { id: 'zzz', title: '绝区零', canRun: false },
       ];
 
+      const version = (state && state.version) || (update && update.current) || '';
+      const showUpdate = Boolean(update && update.hasUpdate && !updateHidden);
+      const fill = (template, values) =>
+        String(template || '').replace(/\{(\w+)\}/g, (match, name) => (values[name] === undefined ? match : String(values[name])));
+
+      const updateBlock = h('div', { className: 'gd-update', 'data-tone': showUpdate ? 'warn' : 'ok' },
+        h('div', { className: 'gd-update-head' },
+          h('h3', { className: 'gd-update-title' },
+            showUpdate
+              ? `${t('updateFound')} v${update.latest}`
+              : update && update.ok === false
+                ? t('updateFailed')
+                : `${t('versionLabel')} v${version} · ${t('updateIsLatest')}`
+          ),
+          h('div', { className: 'gd-update-actions' },
+            showUpdate
+              ? [
+                  h('button', { key: 'now', className: 'gd-btn', 'data-primary': '1', disabled: Boolean(updateBusy), onClick: runUpdate }, updateBusy ? t('updateRunning') : t('updateNow')),
+                  h('button', { key: 'later', className: 'gd-btn', onClick: () => setUpdateHidden(true) }, t('updateLater')),
+                  update.releases ? h('a', { key: 'notes', className: 'gd-link', href: update.releases, target: '_blank', rel: 'noreferrer' }, t('updateNotes')) : null,
+                ]
+              : h('button', { key: 'check', className: 'gd-link', onClick: () => checkUpdate(true) }, updateBusy ? t('updateChecking') : t('updateChecking'))
+          )
+        ),
+        showUpdate ? h('p', { className: 'gd-update-body' }, fill(t('updateBody'), { latest: update.latest, current: update.current })) : null,
+        showUpdate ? h('p', { className: 'gd-update-body' }, t('updateRestartHint')) : null,
+        update && update.ok === false && !updateHidden ? h('p', { className: 'gd-update-body' }, String(update.error || '')) : null
+      );
+
       return h(
         'div',
         { className: 'gd-wrap' },
@@ -738,6 +832,7 @@ window.__ModuleLoader__.load({
           h('p', { className: 'gd-sub', style: { margin: 0 } }, t('subtitle'))
         ),
         error ? h('p', { className: 'gd-hint' }, `${t('error')}: ${error}`) : null,
+        updateBlock,
         h('div', { className: 'gd-tabs', role: 'tablist' }, tabs.map((item) =>
           h('button', {
             key: item.id,

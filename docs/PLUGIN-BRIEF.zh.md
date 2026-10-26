@@ -206,6 +206,8 @@
 | POST | `/install` | 一键修复：`install-bettergi-skill`（从自带副本本地安装）、`install-bettergi-mcp`（确认自带副本并注册，缺失才下载）、`fix-bettergi-mcp`（只注册）；其它 action 开修复会话 |
 | GET | `/runs?game=` | 运行历史列表 |
 | GET | `/run?game=&runId=` | 单轮报告 + stdout 尾部 |
+| GET | `/update` | 检查更新（30 分钟缓存，`?force=1` 强制）：读远端 `package.json` 的 version，与本地比对，返回 `{current, latest, hasUpdate, releases}` |
+| POST | `/update` | 立即更新：有 `.git` 走 `git pull --ff-only`，没有则下载 zip 覆盖插件文件（保留 `node_modules` 与用户数据），返回 `{from, to, method, restartRequired}` |
 | POST | `/reconcile` | 手动触发一次对账（调试用） |
 
 ---
@@ -259,7 +261,7 @@
 
 ## 13. 已完成的验证（可以当作「真做过」的证据）
 
-- 插件版本 `0.2.0`，MIT；`node test/smoke.mjs` → **18/18 PASS**（含状态原子写回读、prompt 构造、dsh 解析、依赖体检、计划任务 XML 解析、前台守护资产 BOM、bettergi-mcp 解析、技能安装 guard、MCP 注册幂等）。
+- 插件版本 `0.3.0`，MIT；`node test/smoke.mjs` → **21/21 PASS**（含状态原子写回读、prompt 构造、dsh 解析、依赖体检、计划任务 XML 解析、前台守护资产 BOM、bettergi-mcp 解析、技能安装 guard、MCP 注册幂等、更新版本比较）。
 - 真实注册：`/apply` 触发一次 UAC，`register-result.json` 返回 `created`；`Get-ScheduledTask 'game-daily-dev-genshin'` → `Ready`，触发器每天 11:00、`RunLevel Highest`、`WakeToRun`。
 - 端到端：手动 `Start-ScheduledTask` → headless 会话真实执行 → `runs/genshin/20261024-022625/report.json`（`status:"partial"`，12 步 12 条证据，含截图）；任务结束 `LastTaskResult=0`；通知写出「原神 日常：部分完成 …」；`state.json` 记账。
 - 桌面端：`plugin_manager install_bundle` 成功，设置页出现「游戏日常」，客户端 slot `{id:"game-daily", order:35, active:true}`。

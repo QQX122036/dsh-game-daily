@@ -1,4 +1,4 @@
-﻿# dsh-game-daily · Game Daily
+# dsh-game-daily · Game Daily
 
 [简体中文](README.md) | **English**
 
@@ -88,6 +88,8 @@ Settings panel ──POST /api/game-daily/apply──▶ state.json + automation
 | POST | `/install` | Create a repair session: `{check:'bettergi'}` or `{action:'fix-headless-credentials'}` |
 | GET | `/runs?game=genshin` | Run history summaries |
 | GET | `/run?id=<runId>` | Full report/meta/stdout of one run |
+| GET | `/update` | Check for updates: `{current, latest, hasUpdate, repo, releases, checkedAt}` (30 min cache, `?force=1` to refresh) |
+| POST | `/update` | Update now: `git pull --ff-only` when `.git` exists, otherwise download the zip and overwrite; returns `{from, to, method, restartRequired}` |
 | POST | `/reconcile` | Trigger one reconciliation manually (normally every 60s) |
 
 ## Data location
@@ -131,6 +133,15 @@ All screen recognition and clicking for ZZZ is delegated to [ZenlessZoneZero-One
 - **OneDragon itself can be installed in one click**: when the ZZZ dependency check reports it missing, pressing "Let DSH fix this" runs `git clone` (or a zip download when git is absent) + `uv sync` + writes the base config (`config/01/game.yml`, `game_account.yml`). It installs to `D:\software\ZenlessZoneZero-OneDragon` by default and **never into the system drive**; set `DSH_GAME_DAILY_ZZZ_ROOT` to choose another location (C: is still rejected). The first install downloads hundreds of MB and takes a few minutes, so the button keeps showing "Working…". The chosen root is recorded in `<stateDir>/zzz-root.txt` and used by later checks and runs.
 - **Privileges**: ZZZ runs elevated, so switching its window / sending input needs an **elevated backend**. When the dependency check finds it down, it offers **Start OneDragon backend (one UAC)**; the runner also tries to start it before a real run.
 - **Flow**: `zzz_health → zzz_window → (zzz_enter if the window is not ready) → zzz_run_one_dragon → zzz_wait in a loop → zzz_status`; after the run the plugin closes the game and stops the backend. Known trap: running one-dragon while the game sits on the title screen makes the first app (mail) fail with "cannot recognise the screen", so `zzz_enter` first.
+## Auto-update
+
+The settings panel opens with a version bar that **reads the latest `package.json` from GitHub** and compares it with the local version.
+
+- When the remote is newer the bar turns amber with "Update available vX.Y.Z" and offers **Update now** / Later / Release notes. Updating runs `git pull --ff-only` for git installs, or downloads the zip and overwrites plugin files when git is absent (`node_modules` and user data are untouched).
+- Up to date: the bar only shows "Version vX.Y.Z · You are on the latest version" plus a **Check for updates** link (30 min cache, click forces a refresh).
+- Files are swapped on disk, so **restart the DSH desktop app** to load the new code (scheduled tasks spawn a fresh node process each run and are unaffected).
+- Version comparison handles `x.y.z` and `x.y.z-pre` (a prerelease sorts lower); a failed check is reported inline instead of throwing.
+
 ## Dependencies and boundaries
 
 - Genshin: BetterGI (default `D:\software\BetterGI`, editable in the panel) + **bundled** bettergi-control skill and bettergi-mcp (above). BetterGI has no HTTP API — it can only be driven by command line / script groups.

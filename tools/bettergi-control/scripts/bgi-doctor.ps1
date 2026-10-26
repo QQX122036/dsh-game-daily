@@ -141,8 +141,8 @@ if ($game.Count -gt 0) {
             readyForTask = ((-not $min) -and $fg -and ([math]::Abs($ratio - 1.7778) -lt 0.02) -and ($w -ge 1920 -and $h -ge 1080))
         }
         if ($min) { Block '游戏窗口处于最小化 → 截图会失败（先跑 bgi-focus-game.ps1）' }
-        elseif (-not $r.window.is169) { Block "游戏窗口 $w x $h 不是 16:9 → 寻路/秘境会失败" }
-        elseif (-not $r.window.atLeast1080p) { Block "游戏窗口 $w x $h 小于 1920x1080 → BetterGI 只有 1080p 识别资源，采集/秘境不可靠（见 display 段）" }
+        elseif (-not $r.window.is169) { Block "游戏窗口 $w x $h 不是 16:9 → 寻路/秘境会失败；自愈：bgi-set-resolution.ps1 -Apply -StartGame -Verify（先 bgi-close.ps1 -Target both，见 SKILL.md §4-9）" }
+        elseif (-not $r.window.atLeast1080p) { Block "游戏窗口 $w x $h 小于 1920x1080 → BetterGI 只有 1080p 识别资源，采集/秘境不可靠（见 display 段）；自愈：bgi-set-resolution.ps1 -Apply -StartGame -Verify" }
         if (-not $fg -and -not $r.window.minimized) { Warn "原神不在前台（当前前台：$($r.window.foregroundTitle)）→ 任务会在第一帧暂停" }
     } else { Warn '原神在运行但没有可用窗口（可能仍在启动）' }
 } else {

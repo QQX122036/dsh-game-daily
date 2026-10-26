@@ -121,10 +121,56 @@ foreach ($it in $plan) {
     $err = $null
 }
 
-$survivors = @($results | Where-Object { $_.outcome -in @('survived-after-kill', 'access-denied') })
+# ---------- 权限不足时自动改走提权按需任务（免 UAC） ----------
+# 由计划任务/提权上下文启动的游戏与 BetterGI，普通权限 Stop-Process 必报 Access is denied。
+# 本机「BetterGI 按需执行」任务（RunLevel=Highest）支持 {mode:"stop"}，由任务计划服务提权，
+# 没有 UAC 弹窗 —— 无人值守时这一步必须能自己走通，不然关不掉就没法改分辨率/重跑。
+$taskStop = $null
+if (@($results | Where-Object { $_.outcome -eq 'access-denied' }).Count -gt 0) {
+    $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    $isElev = $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $taskName = 'BetterGI 按需执行'
+    $task = $null
+    try { $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
+    if ($isElev) {
+        $taskStop = [ordered]@{ attempted = $false; note = '当前已提权却仍 Access is denied（反作弊保护），按需任务也未必能关' }
+    } elseif ($null -eq $task) {
+        $taskStop = [ordered]@{ attempted = $false; note = "计划任务「$taskName」不存在，无法免 UAC 关闭" }
+    } else {
+        $rootBgi = 'D:\software\BetterGI'
+        $reqPath = Join-Path $rootBgi '_run_request.json'
+        $resPath = Join-Path $rootBgi '_run_request.result.json'
+        $stopName = switch ($Target) { 'game' { 'game' } 'bettergi' { 'bettergi' } default { 'both' } }
+        $taskStop = [ordered]@{ attempted = $true; ok = $false; stopped = @(); failed = @(); note = '' }
+        try {
+            (@{ mode = 'stop'; name = $stopName; requestedAt = (Get-Date).ToString('o'); source = 'bgi-close.ps1' } | ConvertTo-Json -Compress) |
+                Set-Content -LiteralPath $reqPath -Encoding UTF8
+            Remove-Item -LiteralPath $resPath -Force -ErrorAction SilentlyContinue
+            Start-ScheduledTask -TaskName $taskName
+            $deadline2 = (Get-Date).AddSeconds(60)
+            while ((Get-Date) -lt $deadline2 -and -not (Test-Path -LiteralPath $resPath)) { Start-Sleep -Milliseconds 1000 }
+            $r = $null
+            if (Test-Path -LiteralPath $resPath) {
+                try { $r = Get-Content -LiteralPath $resPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+            }
+            if ($null -ne $r) {
+                $taskStop.ok = [bool]$r.ok
+                $taskStop.stopped = @($r.stopped)
+                $taskStop.failed = @($r.failed)
+                $taskStop.note = "按需任务已执行（免 UAC）：ok=$($r.ok)"
+            } else {
+                $taskStop.note = '按需任务已触发，但 60 秒内没等到结果文件'
+            }
+        } catch {
+            $taskStop.note = "按需任务触发失败：$($_.Exception.Message)"
+        }
+    }
+}
+
+$survivors = @($plan | Where-Object { Get-Process -Id $_.pid -ErrorAction SilentlyContinue })
 
 if ($Json) {
-    ([ordered]@{ target = $Target; dryRun = $false; planned = @($plan); results = @($results); survivors = $survivors.Count }) | ConvertTo-Json -Depth 6
+    ([ordered]@{ target = $Target; dryRun = $false; planned = @($plan); results = @($results); viaTask = $taskStop; survivors = $survivors.Count }) | ConvertTo-Json -Depth 6
 } else {
     "=== 关闭结果（target=$Target）==="
     foreach ($r in $results) {
@@ -138,6 +184,16 @@ if ($Json) {
         }
         "  PID $($r.pid) $($r.name) → $txt"
         if ($r.error) { "      错误：$($r.error)" }
+    }
+    if ($null -ne $taskStop) {
+        ""
+        if ($taskStop.attempted -and $taskStop.ok) {
+            "  ✓ 普通权限关不掉 → 已自动走提权按需任务关闭（无 UAC）：已停止=[$($taskStop.stopped -join ',')]"
+        } elseif ($taskStop.attempted) {
+            "  ⚠ 已尝试按需任务关闭：$($taskStop.note)；失败=[$($taskStop.failed -join '; ')]"
+        } else {
+            "  ℹ $($taskStop.note)"
+        }
     }
     if ($survivors.Count -gt 0) {
         ""

@@ -1,4 +1,4 @@
-﻿---
+---
 name: bettergi-control
 description: 用自然语言指挥本机 BetterGI（更好的原神）完成自动化：启动原神与截图器、跑「一条龙」日常、跑配置组、采集材料、打秘境、改配置与队伍、查任务进度与失败原因。当用户说"启动原神""跑日常/一条龙""采集 XX 材料""打 XX 秘境""帮我改 BetterGI 配置/队伍/树脂""看看今天任务跑成没/为什么失败"等，或提到 BetterGI、更好的原神、自动秘境、自动采集、自动拾取、自动剧情时使用。本机已安装 0.66.0 于 D:\software\BetterGI，配套指南见工作区 docs\BetterGI-Agent-使用指南.md。
 ---
@@ -6,7 +6,7 @@ description: 用自然语言指挥本机 BetterGI（更好的原神）完成自�
 # BetterGI 指挥台（本机已装好并跑通）
 
 **本机实证**（2026-10-15）：BetterGI **0.66.0** 免安装版装在 `D:\software\BetterGI`；一条龙配置 `日常`（领取邮件 → 合成树脂 → 领取每日奖励 → 自动秘境）已跑通（19:57–20:07 那次完整成功：合成树脂 ✓、秘境命中「万能战斗策略（萌新推荐）」刷 4 轮 ✓、每日奖励「今日奖励已领取」✓）；Windows 计划任务 `BetterGI 日常一条龙` 每天 **08:00** 自动跑，DSH 每天 **08:40** 汇报结果。
-本 skill 的 7 个脚本均已实机验证：语法/BOM（UTF-8 带 BOM，PS 5.1）、只读路径全部退出码 0、`-DryRun` 不产生副作用、验收前后 `User\config.json` 与 `User\OneDragon\日常.json` 哈希不变。
+本 skill 的 16 个脚本均已实机验证：语法/BOM（UTF-8 带 BOM，PS 5.1）、只读路径全部退出码 0、`-DryRun` 不产生副作用、验收前后 `User\config.json` 与 `User\OneDragon\日常.json` 哈希不变。
 **完整文档**（5266 行，第 10 章配方 / 第 11 章排障 / 第 12 章速查）：`<dsh-betterGI 工作区>\docs\BetterGI-Agent-使用指南.md`
 
 ---
@@ -17,6 +17,7 @@ description: 用自然语言指挥本机 BetterGI（更好的原神）完成自�
    - BetterGI **正在运行** → **任何写配置/写配置组/写一条龙的操作都必须先请用户退出**（运行中它会把自己内存里的配置**回写覆盖**你的修改，本会话实测踩过）。
    - 原神**正在运行**但用户要求"启动游戏" → 先问清楚是不是要重启。
 2. **看前置**：脚本会报告 4 个阻断项 —— 进程状态、窗口是否 16:9 且 ≥1920×1080（自动秘境/自动寻路硬要求）、`autoPickConfig.pickKey` 是否 F（BetterGI 只认 **E/F/G/L** 四个带模板图的键）、截图方式是否 `BitLlt`→`BitBlt`。
+   **分辨率这一项能自愈**（2026-10-26 起）：`bgi-close.ps1 -Target both` → `bgi-set-resolution.ps1 -Apply -StartGame -Verify`（改 `HKCU\Software\miHoYo\原神` 的 Screenmanager 三键 + 补 `HIGHDPIAWARE` DPI 覆盖，带备份/回滚/实测复核）。复核 exit 0 再跑任务，别让用户自己去点设置。**无人值守可用**：写注册表不需提权；启动未提权时自动走「BetterGI 按需执行」计划任务，不弹 UAC（详见 §4-9）。
 3. **看意图**：是要**执行**（触发任务）还是**改配置**（写文件）还是**排错**（读日志）。三者顺序不同，见 §2。
 
 ## §1 能力边界（先认清，别承诺做不到的事）
@@ -30,6 +31,7 @@ description: 用自然语言指挥本机 BetterGI（更好的原神）完成自�
 | 打秘境/地脉/首领/七圣召唤/音游 | 通过配置组 + JS `dispatcher.runXxxTask(...)`，或改一条龙配置后用 `startOneDragon` |
 | 改配置/队伍/树脂/任务顺序 | 退出 BetterGI 后改 `User\config.json` 或 `User\OneDragon\*.json`（脚本自动备份、校验、回读） |
 | 查进度与失败原因 | `log\better-genshin-impact<yyyyMMdd>.log` + `log\task_progress\*.json` + `log\ExecutionRecords\*.json` |
+| **修正窗口分辨率（16:9 且 ≥1920×1080）** | `bgi-set-resolution.ps1`：写 `HKCU\Software\miHoYo\原神` 的 Screenmanager 三键（宽/高/全屏=0）+ 补 `HIGHDPIAWARE` DPI 覆盖；要求游戏与 BetterGI 先退出；`-Apply` 自动备份、`-Restore` 回滚、`-Verify` 用 GetClientRect+GetDpiForWindow 实测客户区 |
 
 | **做不到（别硬承诺）** | 原因 |
 | --- | --- |
@@ -111,6 +113,7 @@ pwsh -File $S\bgi-watch.ps1 -Mode groups -TimeoutMinutes 60  # 观察判定
 | `bgi-collect.ps1` | 材料 → **本机**路径索引（+可选触发采集） | `-Material 名` `-List` `-ExtraDirs` `-Run` `-DryRun` | 0=命中，1=未命中，2=前置不满足 |
 | `bgi-fetch-route.ps1` | 材料 → **官方仓库**检索/下载路线（MCP 不可用时的替代） | `-Material 名` `-Kind pathing\|js\|combat\|tcg` `-Download` `-All` `-Overwrite` `-RefreshIndex` | 0=命中，1=未命中，2=参数/网络问题 |
 | `bgi-focus-game.ps1` | **跑自动化前的窗口准备**：还原最小化 + 置前 + 回报尺寸/前台 | `-ProcessName YuanShen` `-NoFocus` `-Json` | 0=可跑（可见+前台+16:9≥1080P），1=未完全就绪，2=游戏没窗口 |
+| `bgi-set-resolution.ps1` | **分辨率自愈**：把游戏写成 16:9 ≥1080P（注册表三键 + DPI 覆盖），带备份/回滚/实测复核；未提权时自动走按需计划任务启动（免 UAC） | `-Width 1920` `-Height 1080` `-Fullscreen 0` `-Apply` `-Restore` `-StartGame` `-DirectStart` `-StartMode Auto` `-Verify` `-DryRun` `-Json` `-WaitSeconds 150` | 0=已达成/已写入并复核通过，1=前置不满足（游戏或 BetterGI 在跑/注册表键缺失/exe 找不到/无备份），2=写入或复核失败 |
 | `bgi-doctor.ps1` | **开跑前体检**（只读，一次性审完能不能跑） | `-Root` `-Json` `-Material 星螺` | 0=就绪，1=有警告，2=有阻断 |
 | `bgi-log.ps1` | **日志定向检索**（按级别/正则/时间窗/任务过滤，带行号与正文） | `-Pattern` `-Level ERR,WRN` `-SinceMinutes` `-Tail` `-Task` `-Json` | 0=有命中，1=无命中，2=日志不存在 |
 | `bgi-schedule.ps1` | **调度总览**（计划任务/包装器日志/一条龙/配置组/最近收尾） | `-Root` `-Runs 5` `-Json` | 0=正常，1=有提示 |
@@ -132,13 +135,15 @@ pwsh -File $S\bgi-watch.ps1 -Mode groups -TimeoutMinutes 60  # 观察判定
 6. 写 JS 脚本并挂进配置组 → `User\JsScript\<名>\`(manifest+main) + `bgi-group.ps1 -Add`
 7. 查今天跑成没 / 为什么失败 → `bgi-watch.ps1` + `references\troubleshooting.md`
 8. 换一套战斗策略 → `bgi-strategy.ps1 -List/-Simulate/-Validate`
+9. **分辨率不对（非 16:9 / <1080P）→ 自愈**：`bgi-close.ps1 -Target both` → `bgi-set-resolution.ps1 -Apply -StartGame -Verify`（`-Verify` 输出 `窗口实测：1920x1080（原始 1280x720，DPI 144）` 且 exit 0 才算过）。
+   **无人值守链路（睡觉跑日常就是这条）**：`-Apply` 只写 HKCU，不需要提权；`-StartGame` 在未提权上下文会自动改走 `RunLevel=Highest` 的「BetterGI 按需执行」计划任务（请求文件 `_run_request.json` + `Start-ScheduledTask`），**由任务计划服务提权、不弹 UAC**；`-StartMode Auto|Process|Task` 可强制指定。`bgi-close.ps1` 遇到 `Access is denied` 也会自动落到该任务的 `{mode:"stop"}`（同样无 UAC）。而夜间由 `game-daily-genshin` 计划任务（RunLevel=Highest）拉起 agent 时，agent 自己就是提权上下文，直接 `Start-Process` 也不弹框——全链路零人工。
 
 ## §5 红线（违反会白跑或伤账号）
 
 1. **不改游戏文件、不读写游戏内存**；不手改路径里的 `bgi_version` 绕过校验。
 2. **运行中不改配置**（会被覆盖）——先让用户从托盘退出。
 3. **不跑未审计的第三方脚本**（脚本仓库来源可能是别人的私服/外挂逻辑）。
-4. **别承诺"后台挂机"**：本机客户端必须保持原神**可见且前台**（其他窗口抢焦点 → `当前获取焦点的窗口为: X，不是原神，暂停`）；锁屏会导致截图黑屏。窗口准备用 `bgi-focus-game.ps1` / MCP 的 `bgi_focus_game`（内部用 **`SwitchToThisWindow`**——实测 `ShowWindow(SW_RESTORE)`/`SetWindowPlacement`/`ShowWindowAsync` **对原神窗口全部无效**；分辨率不足 <1920×1080 脚本改不了，只能用户自己在游戏里调或用注册表法）。
+4. **别承诺"后台挂机"**：本机客户端必须保持原神**可见且前台**（其他窗口抢焦点 → `当前获取焦点的窗口为: X，不是原神，暂停`）；锁屏会导致截图黑屏。窗口准备用 `bgi-focus-game.ps1` / MCP 的 `bgi_focus_game`（内部用 **`SwitchToThisWindow`**——实测 `ShowWindow(SW_RESTORE)`/`SetWindowPlacement`/`ShowWindowAsync` **对原神窗口全部无效**；分辨率不足或非 16:9 用 `bgi-set-resolution.ps1` 自愈—— `-Apply` 改注册表三键 + 补 DPI 覆盖，`-StartGame` 拉起，`-Verify` 实测客户区；别再让用户自己去点设置）。
 5. 日志与截图可能含账号隐私（UID、昵称、游戏画面）——外发前先确认。
 6. **账号风险由使用方式决定**：官方用户条款把第三方软件/模拟操作列为封号理由之一，低调使用。
 

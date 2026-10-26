@@ -583,7 +583,7 @@ window.__ModuleLoader__.load({
         setMessage('');
         try {
           const value = await api('/update', { method: 'POST', body: '{}' });
-          setUpdateHidden(true);
+          setUpdateHidden(false);
           setMessage(t('updateDone').replace('{version}', value.to || ''));
           await checkUpdate(true);
           await load(true);

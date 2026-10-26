@@ -9,7 +9,7 @@ import { probeDependencies, resolveDsh } from '../lib/deps.mjs';
 import { buildRunPrompt, buildInstallPrompt, buildReportPrompt } from '../lib/prompt.mjs';
 import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } from '../lib/report.mjs';
 import { queryTasks, taskStatus, refreshTaskInfo, readTaskDefinition, computeNextRun } from '../lib/tasks.mjs';
-import { guardScriptPath, guardStatus } from '../lib/runner.mjs';
+import { guardScriptPath, guardStatus, aliveFromError, readRunner } from '../lib/runner.mjs';
 import { resolveBettergiMcp, vendorPath, bundledPath } from '../lib/bettergi-mcp.mjs';
 import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill, bundledSkillPath } from '../lib/skills.mjs';
 import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
@@ -162,6 +162,26 @@ Promise.resolve()
       const state = guardStatus('genshin');
       if (state.running) throw new Error('冒烟测试期间不该有守护进程');
       return 'keep-foreground.ps1 就绪（BOM ok）';
+    });
+    check('runner alive 判定（EPERM 视为存活）', () => {
+      // 回归：Windows 上 Medium 宿主探测提权进程只会拿到 EPERM，
+      // 早先被当成「进程不存在」，导致计划任务轮次被 reconcile 在 +3 分钟误判 failed。
+      const eperm = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+      const esrch = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+      if (aliveFromError(eperm) !== true) throw new Error('EPERM 必须视为进程仍存活');
+      if (aliveFromError(esrch) !== false) throw new Error('ESRCH 应视为进程不存在');
+      if (aliveFromError(null) !== false) throw new Error('空错误应为假');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-alive-'));
+      try {
+        fs.mkdirSync(path.join(dir, 'automation'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'automation', 'runner-probe.pid'), JSON.stringify({ pid: process.pid }), 'utf8');
+        const self = readRunner(dir, 'probe');
+        if (!self || self.running !== true) throw new Error('当前进程应判为存活');
+        if (readRunner(dir, 'nope') !== null) throw new Error('没有 pid 文件时应返回 null');
+        return `EPERM→存活、ESRCH→不存在；本进程 pid=${process.pid} 判为 running`;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
     check('zzz one-dragon integration', () => {
       const zzz = gameById('zzz');

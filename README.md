@@ -34,10 +34,10 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 
 ## 面板里能做什么
 
-- **顶部游戏页签**：原神 / 崩坏3 / 崩坏：星穹铁道 / 绝区零（走 ZenlessZoneZero-OneDragon「一条龙」）。
+- **顶部游戏页签**：原神 / 崩坏3 / 崩坏：星穹铁道（走 March7thAssistant「三月七小助手」）/ 绝区零（走 ZenlessZoneZero-OneDragon「一条龙」）。
 - **代理日常开关（默认关）**：打开后才出现排班与执行设置；改动先落在本地草稿，点「保存并应用」才写盘并重建计划任务。
 - **排班**：每天时间、执行日（每天 / 指定星期）、超时、模式（真实执行 / 演练只诊断）、错过补跑、跑完开一个会话汇报、游戏路径（原神可指定 `BetterGI.exe`）。超时指「一轮最多跑多久」（5–180 分钟，默认原神 150、崩3/星铁 45）；计划任务的系统执行时限会自动设为「超时 + 10 分钟」，而那 5 分钟的余量留给插件自己收尾。
-- **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi MCP 注册；选到绝区零时另加「一条龙安装 / 一条龙后端」。缺任何一项都给出「让 DSH 修这个」按钮：能自动做的（下载 bettergi-mcp、安装 bettergi-control、注册 MCP 配置、启动一条龙后端）点一下直接做，按钮会变成「处理中…」；需要多步操作或权限的才新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
+- **依赖体检**：dsh CLI、DSH 版本、headless 运行器（含 credentials 补丁）、computer-use 插件、技能文件、坐标校准、提权助手、BetterGI、bettergi-control 技能、bettergi-mcp 脚本、bettergi MCP 注册；选到星铁时另加「March7thAssistant」，选到绝区零时另加「一条龙安装 / 一条龙后端」。缺任何一项都给出「让 DSH 修这个」按钮：能自动做的（下载 bettergi-mcp、安装 bettergi-control、注册 MCP 配置、启动一条龙后端）点一下直接做，按钮会变成「处理中…」；需要多步操作或权限的才新开一个 DSH 会话，把修复步骤（含备份/回读要求）交给 Harness 执行，并把界面切过去。
 - **立即运行一次 / 停止 / 关闭全部代理**：立即运行走「已保存」的配置；停止会杀掉该游戏的 headless 运行进程；关闭全部代理会移除所有计划任务。
 - **最近运行**：读取 `report.json`（状态、模式、步骤、证据、结论）与 stdout 尾部。
 
@@ -52,12 +52,12 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
                                                             │
                                                              ▼
                                              node automation/run-headless.mjs --game <id>
-                                                            │  spawn
+                                                            │  spawn（按 engine 分流）
                                                             ▼
-                              dsh --profile headless --patch automation/headless-overlay.yml "<prompt>"
+                              dsh --profile headless --patch automation/headless-overlay.yml "<prompt>"（仅技能引擎：原神/崩3）
                                                             │
                                                             ▼
-                                 按技能执行（原神走 bettergi-control；崩3/星铁走 game-daily-*）
+                                 按 engine 分流执行：原神/崩3 → bettergi-control 或 game-daily-* 技能；星铁 → March7th Assistant.exe daily；绝区零 → 一条龙后端
                                                             │
                                                             ▼
                                   <stateDir>/runs/<game>/<runId>/{meta.json,report.json,stdout.log,screens/}
@@ -109,6 +109,8 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | `DSH_GAME_DAILY_TASK_PREFIX` | `game-daily-` | 覆盖计划任务名前缀 |
 | `DSH_GAME_DAILY_BETTERGI_MCP` | 自动解析（见下） | bettergi MCP 服务器脚本的显式路径（优先级最高） |
 | `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI 安装位置（体检用） |
+| `DSH_GAME_DAILY_M7A` | 自动解析（见下） | March7th Assistant.exe 的位置（指到 exe 或目录都行），优先级最高 |
+| `DSH_GAME_DAILY_M7A_TASK` | `daily` | 星铁这一轮跑 M7A 的哪个任务（`daily` / `main` / `power` / `fight` …） |
 
 ## 随插件自带的工具（bettergi-mcp / bettergi-control）
 
@@ -134,6 +136,18 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 - **权限**：绝区零以管理员运行，切窗口/发输入需要**提权的一条龙后端**。体检里「一条龙后端」不在跑时给「启动一条龙后端（会弹一次 UAC）」按钮；真实运行前 runner 也会自动尝试启动。
 - **流程**：`zzz_health → zzz_window →（窗口无效时 zzz_enter）→ zzz_run_one_dragon → 循环 zzz_wait → zzz_status`；跑完插件自动关游戏、停后端。已知坑：游戏停在标题界面直接跑一条龙，第一个应用（邮件）会报「未能识别当前画面」，所以必须先 `zzz_enter` 进到「大世界-普通」。
 
+## 星穹铁道：走 March7thAssistant（m7a 引擎）
+
+星铁不再走「截图 → 认屏 → 坐标点击」那一套，而是直接调用本机的 **March7thAssistant（三月七小助手，M7A）**：
+
+```
+engine: m7a   →   "March7th Assistant.exe" daily
+```
+
+- M7A 自带 OCR 与战斗识别，一条 `daily` 就能跑完「清体力 / 每日实训 / 领奖励」，比逐屏手推稳得多，也不需要坐标校准。
+- 插件侧只做调度与记账：spawn M7A → 收它的 stdout → 按日志小节写 `report.json`（`generatedBy: runner-m7a`），面板、通知、历史照旧。
+- **权限**：M7A 是 `requireAdministrator`。普通权限下连启动都会被 Windows 拒绝（EACCES），所以要从**计划任务（最高权限）**跑；手动「立即运行一次」需要 DSH 本身以管理员身份运行。这种情况下报告会明确写出「需要管理员权限」。
+- 体检里会多一项「March7thAssistant」；找不到程序时可用 `DSH_GAME_DAILY_M7A` 指到 exe 或目录。
 ## 自动更新
 
 设置页顶部有一条版本栏：**打开面板时会自动去 GitHub 读最新的 `package.json`**，和本地版本比对。

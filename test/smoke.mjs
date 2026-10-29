@@ -16,6 +16,7 @@ import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '..
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
 import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot } from '../lib/zzz.mjs';
 import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mjs';
+import { parseM7aLog, m7aReport, resolveM7a } from '../lib/m7a.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -44,6 +45,44 @@ check('games registry', () => {
   if (taskNameFor('game-daily-', 'hi') !== 'game-daily-hi') throw new Error('taskNameFor 不对');
   if (!isWeekdays([1, 3, 7]) || isWeekdays([0, 2]) || isWeekdays([])) throw new Error('isWeekdays 判定不对');
   return GAMES.map((g) => `${g.id}:${g.engine}:${g.defaultTime}`).join(' ');
+});
+
+check('m7a log parse', () => {
+  const okLog = [
+    '+-----------------------------+',
+    '|        开始领取奖励         |',
+    '+-----------------------------+',
+    '2026-10-27 23:01:43,466 | INFO | 当前界面：星际和平指南-每日实训',
+    '+-----------------------------+',
+    '|          停止运行           |',
+    '+-----------------------------+',
+    '------------------------------------------------------- 完成 ---',
+  ].join('\n');
+  const okParsed = parseM7aLog(okLog, 0);
+  if (okParsed.status !== 'success') throw new Error(`正常收尾应为 success，实际 ${okParsed.status}`);
+  if (!okParsed.steps.some((s) => s.name === '开始领取奖励')) throw new Error('没解析出小节标题');
+
+  const failParsed = parseM7aLog('2026-10-27 23:00:00 | ERROR | 启动游戏失败', 1);
+  if (failParsed.status !== 'failed') throw new Error(`非 0 退出应为 failed，实际 ${failParsed.status}`);
+
+  const earlyExit = parseM7aLog('', 0);
+  if (earlyExit.status !== 'partial') throw new Error(`无收尾标记应为 partial，实际 ${earlyExit.status}`);
+
+  const report = m7aReport({ gameId: 'sr', mode: 'real', runId: 'x', exitCode: 0, startedAt: '', logText: okLog });
+  if (report.status !== 'success' || report.generatedBy !== 'runner-m7a') throw new Error('m7aReport 字段不对');
+
+  // 启动横幅也是 `| ... |` 形状，不能当成任务小节。
+  const bannerLog = [
+    '|                          欢迎使用 March7th Assistant                          |',
+    '|                 https://github.com/moesnow/March7thAssistant                 |',
+    '|                  此程序为免费开源项目 如果你付了钱请立刻退款                  |',
+    '|                                   开始日常任务                                 |',
+  ].join('\n');
+  const bannerParsed = parseM7aLog(bannerLog, 0);
+  if (bannerParsed.steps.length !== 1 || bannerParsed.steps[0].name !== '开始日常任务') {
+    throw new Error(`横幅没被过滤：${JSON.stringify(bannerParsed.steps)}`);
+  }
+  return `ok=${okParsed.status} fail=${failParsed.status} early=${earlyExit.status} banner=${bannerParsed.steps.length}`;
 });
 
 check('state normalize', () => {
@@ -115,13 +154,17 @@ Promise.resolve()
     again.recordRun('hi', { runId: 'r1', trigger: 'manual', mode: 'real', status: 'success', startedAt: '2026-10-24T01:00:00Z', endedAt: '2026-10-24T01:10:00Z' });
     if (again.get().runs.hi.length !== 1) throw new Error('recordRun 未写入');
     fs.rmSync(dir, { recursive: true, force: true });
-    results[2].ok = true;
-    results[2].detail = 'state.json 原子写 + 回读 ok';
+    const slot = results.find((r) => r.name === 'store roundtrip');
+    if (slot) {
+      slot.ok = true;
+      slot.detail = 'state.json 原子写 + 回读 ok';
+    }
   })
   .catch((error) => {
-    if (results[2]) {
-      results[2].ok = false;
-      results[2].detail = String((error && error.stack) || error);
+    const slot = results.find((r) => r.name === 'store roundtrip');
+    if (slot) {
+      slot.ok = false;
+      slot.detail = String((error && error.stack) || error);
     }
   })
   .then(async () => {

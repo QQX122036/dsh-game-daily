@@ -17,7 +17,7 @@ import { bettergiLogFile, bettergiReport } from '../lib/bettergi.mjs';
 const PS = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 
 function parseArgs(argv) {
-  const out = { root: 'D:\\software\\BetterGI', config: '日常', gameId: 'genshin', mode: 'real', runId: '' };
+  const out = { root: 'D:\\software\\BetterGI', config: '日常', gameId: 'genshin', mode: 'real', runId: '', timeoutMin: 60 };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     if (token === '--root') out.root = argv[++i];
@@ -25,6 +25,7 @@ function parseArgs(argv) {
     else if (token === '--game') out.gameId = argv[++i];
     else if (token === '--mode') out.mode = argv[++i];
     else if (token === '--run-id') out.runId = argv[++i];
+    else if (token === '--timeout-min') out.timeoutMin = Number(argv[++i]) || 60;
   }
   return out;
 }
@@ -87,7 +88,7 @@ async function main() {
     } catch (error) {
       log(`启动失败：${String((error && error.message) || error)}`);
     }
-    const deadline = Date.now() + 240000;
+    const deadline = Date.now() + Math.max(30, Number(args.timeoutMin) || 60) * 1000;
     while (Date.now() < deadline && !gameWindowTitle()) await sleep(3000);
     if (!gameWindowTitle()) log('警告：游戏没有在 240 秒内出现');
     await sleep(10000);
@@ -117,11 +118,21 @@ async function main() {
     process.stdout.write(`##REPORT ${JSON.stringify(bettergiReport({ gameId: args.gameId, mode: args.mode, runId: args.runId, exitCode: -1, startedAt, logText: '' }))}\n`);
     process.exit(1);
   });
-  child.on('exit', (code) => {
-    const elapsed = Math.round((Date.now() - started) / 1000);
+  const DONE_MARKER = '一条龙和配置组任务结束';
+  const timeoutMs = Math.max(10, Number(args.timeoutMin) || 60) * 60 * 1000;
+  let finished = false;
+
+  const finish = (code, reason) => {
+    if (finished) return;
+    finished = true;
+    clearInterval(watchdog);
     const text = readSince(logFile, sizeBefore);
-    if (elapsed < 15 && !text.includes('一条龙和配置组任务结束')) {
-      log(`进程 ${elapsed}s 就退出（code=${code}），多半是 BetterGI 提权重启了（退出码 553），本次没有接管。`);
+    if (reason) log(reason);
+    // BetterGI 跑完任务后 GUI 仍驻留，这里收掉它（它是我们自己拉起的）。
+    try {
+      execFileSync('taskkill.exe', ['/F', '/IM', 'BetterGI.exe'], { windowsHide: true, timeout: 20000 });
+    } catch {
+      /* ignore */
     }
     const report = bettergiReport({
       gameId: args.gameId,
@@ -132,7 +143,24 @@ async function main() {
       logText: text,
     });
     process.stdout.write(`##REPORT ${JSON.stringify(report)}\n`);
-    process.exit(code === 0 ? 0 : 0);
+    process.exit(0);
+  };
+
+  // BetterGI 的 GUI 跑完一条龙不会退出，所以不能只等进程退出：
+  // 以日志里的收尾标记为准，同时保留进程退出与超时两条兜底。
+  const watchdog = setInterval(() => {
+    const text = readSince(logFile, sizeBefore);
+    if (text.includes(DONE_MARKER)) finish(0, '检测到一条龙收尾标记');
+    else if (Date.now() - started > timeoutMs) finish(-1, `超过 ${args.timeoutMin || 60} 分钟仍未收尾，放弃等待`);
+  }, 5000);
+
+  child.on('exit', (code) => {
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    const text = readSince(logFile, sizeBefore);
+    if (elapsed < 15 && !text.includes(DONE_MARKER)) {
+      log(`进程 ${elapsed}s 就退出（code=${code}），多半是 BetterGI 提权重启了（退出码 553），本次没有接管。`);
+    }
+    finish(code, 'BetterGI 进程已退出');
   });
 }
 

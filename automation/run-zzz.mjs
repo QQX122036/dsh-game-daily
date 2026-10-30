@@ -17,13 +17,9 @@ function parseArgs(argv) {
     if (token === '--game') out.gameId = argv[++i];
     else if (token === '--mode') out.mode = argv[++i];
     else if (token === '--run-id') out.runId = argv[++i];
-    else if (token === '--timeout-min') argsTimeout(args, argv[++i]);
+    else if (token === '--timeout-min') out.timeoutMin = Number(argv[++i]) || 60;
   }
   return out;
-}
-
-function argsTimeout(out, value) {
-  out.timeoutMin = Number(value) || 60;
 }
 
 const log = (text) => process.stdout.write(`[zzz] ${text}\n`);

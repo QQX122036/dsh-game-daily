@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // 原神「一条龙」直连执行器（计划任务/插件的子进程）。
 //
-// 流程：
-//   1) 游戏没跑 → 先用 BetterGI 的 GUI 模式联动拉起游戏，等窗口出现；
-//   2) 释放 BetterGI 单实例（GUI 占着时，命令行触发只会被转发不会执行）；
-//   3) 跑 `BetterGI.exe startOneDragon <配置>`；
-//   4) 从 BetterGI 日志增量里提炼报告，末行打印 "##REPORT {json}" 给 runner。
+// 实测结论（2026-10-31）：`BetterGI.exe startOneDragon <配置>` 冷启动会自己
+// 拉起原神并进入一条龙（约 4.5 分钟，含游戏启动与登录），所以这里只需三步：
+//   1) 若已有 BetterGI 实例在跑先结束它——单实例会把命令行参数只做转发、不会真正执行；
+//   2) 直接跑 `startOneDragon`；
+//   3) 以日志里的收尾标记「一条龙和配置组任务结束」为准产出报告
+//      （BetterGI 跑完后 GUI 会驻留，不能只等进程退出，否则会挂到超时），
+//      收尾时结束我们自己拉起的 BetterGI。
 //
 // 这个脚本必须以管理员权限运行（BetterGI 与原神都是提权进程）；
 // 计划任务以「最高权限」触发时天然满足，手动运行时由 runner 负责报错提示。
@@ -14,10 +16,17 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { bettergiLogFile, bettergiReport } from '../lib/bettergi.mjs';
 
-const PS = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+const DONE_MARKER = '一条龙和配置组任务结束';
 
 function parseArgs(argv) {
-  const out = { root: 'D:\\software\\BetterGI', config: '日常', gameId: 'genshin', mode: 'real', runId: '', timeoutMin: 60 };
+  const out = {
+    root: 'D:\\software\\BetterGI',
+    config: '日常',
+    gameId: 'genshin',
+    mode: 'real',
+    runId: '',
+    timeoutMin: 60,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     if (token === '--root') out.root = argv[++i];
@@ -32,19 +41,6 @@ function parseArgs(argv) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (text) => process.stdout.write(`[bettergi] ${text}\n`);
-
-function gameWindowTitle() {
-  try {
-    const out = execFileSync(
-      PS,
-      ['-NoProfile', '-NonInteractive', '-Command', "(Get-Process YuanShen -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle } | Select-Object -First 1).MainWindowTitle"],
-      { encoding: 'utf8', windowsHide: true, timeout: 15000 },
-    );
-    return String(out || '').trim();
-  } catch {
-    return '';
-  }
-}
 
 function killBettergi() {
   try {
@@ -74,33 +70,24 @@ async function main() {
   const exe = path.join(args.root, 'BetterGI.exe');
   if (!fs.existsSync(exe)) {
     log(`找不到 ${exe}`);
-    process.stdout.write(`##REPORT ${JSON.stringify(bettergiReport({ gameId: args.gameId, mode: args.mode, runId: args.runId, exitCode: -1, startedAt: new Date().toISOString(), logText: '' }))}\n`);
+    process.stdout.write(
+      `##REPORT ${JSON.stringify(
+        bettergiReport({ gameId: args.gameId, mode: args.mode, runId: args.runId, exitCode: -1, startedAt: new Date().toISOString(), logText: '' }),
+      )}\n`,
+    );
     process.exit(1);
   }
 
   const startedAt = new Date().toISOString();
+  const started = Date.now();
 
-  // 1) 确保游戏在跑
-  if (!gameWindowTitle()) {
-    log('游戏未运行：用 BetterGI 联动启动');
-    try {
-      spawn(exe, ['start'], { detached: true, stdio: 'ignore' }).unref();
-    } catch (error) {
-      log(`启动失败：${String((error && error.message) || error)}`);
-    }
-    const deadline = Date.now() + Math.max(30, Number(args.timeoutMin) || 60) * 1000;
-    while (Date.now() < deadline && !gameWindowTitle()) await sleep(3000);
-    if (!gameWindowTitle()) log('警告：游戏没有在 240 秒内出现');
-    await sleep(10000);
-  } else {
-    log('游戏已在运行');
+  // 1) 清掉可能残留的 BetterGI 实例（单实例会把命令行只做转发）
+  if (killBettergi()) {
+    log('已结束残留的 BetterGI 实例（释放单实例）');
+    await sleep(3000);
   }
 
-  // 2) 释放单实例（GUI 模式占着时命令行触发不会真正执行）
-  if (killBettergi()) log('已结束 BetterGI GUI 实例（释放单实例）');
-  await sleep(4000);
-
-  // 3) 跑一条龙
+  // 2) 跑一条龙（冷启动会自己拉起游戏）
   const logFile = bettergiLogFile(args.root);
   let sizeBefore = 0;
   try {
@@ -108,29 +95,20 @@ async function main() {
   } catch {
     sizeBefore = 0;
   }
-  log(`开始一条龙：startOneDragon ${args.config}`);
-  const started = Date.now();
+  log(`开始一条龙：startOneDragon ${args.config}（BetterGI 会自行拉起游戏）`);
   const child = spawn(exe, ['startOneDragon', args.config], { cwd: args.root, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (chunk) => process.stdout.write(chunk));
   child.stderr.on('data', (chunk) => process.stderr.write(chunk));
-  child.on('error', (error) => {
-    log(`启动失败：${String((error && error.message) || error)}`);
-    process.stdout.write(`##REPORT ${JSON.stringify(bettergiReport({ gameId: args.gameId, mode: args.mode, runId: args.runId, exitCode: -1, startedAt, logText: '' }))}\n`);
-    process.exit(1);
-  });
-  const DONE_MARKER = '一条龙和配置组任务结束';
-  const timeoutMs = Math.max(10, Number(args.timeoutMin) || 60) * 60 * 1000;
-  let finished = false;
 
+  let finished = false;
   const finish = (code, reason) => {
     if (finished) return;
     finished = true;
     clearInterval(watchdog);
     const text = readSince(logFile, sizeBefore);
     if (reason) log(reason);
-    // BetterGI 跑完任务后 GUI 仍驻留，这里收掉它（它是我们自己拉起的）。
     try {
-      execFileSync('taskkill.exe', ['/F', '/IM', 'BetterGI.exe'], { windowsHide: true, timeout: 20000 });
+      killBettergi();
     } catch {
       /* ignore */
     }
@@ -146,14 +124,17 @@ async function main() {
     process.exit(0);
   };
 
-  // BetterGI 的 GUI 跑完一条龙不会退出，所以不能只等进程退出：
-  // 以日志里的收尾标记为准，同时保留进程退出与超时两条兜底。
+  const timeoutMs = Math.max(10, Number(args.timeoutMin) || 60) * 60 * 1000;
   const watchdog = setInterval(() => {
     const text = readSince(logFile, sizeBefore);
     if (text.includes(DONE_MARKER)) finish(0, '检测到一条龙收尾标记');
     else if (Date.now() - started > timeoutMs) finish(-1, `超过 ${args.timeoutMin || 60} 分钟仍未收尾，放弃等待`);
   }, 5000);
 
+  child.on('error', (error) => {
+    log(`启动失败：${String((error && error.message) || error)}`);
+    finish(-1, 'BetterGI 启动失败');
+  });
   child.on('exit', (code) => {
     const elapsed = Math.round((Date.now() - started) / 1000);
     const text = readSince(logFile, sizeBefore);

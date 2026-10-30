@@ -54,14 +54,26 @@ check('m7a log parse', () => {
     '|        开始领取奖励         |',
     '+-----------------------------+',
     '2026-10-27 23:01:43,466 | INFO | 当前界面：星际和平指南-每日实训',
+    '2026-10-27 23:01:44,100 | INFO | 派遣委托或收取1次委托奖励: 已完成 +  (+100分)]',
+    '2026-10-27 23:01:44,500 | INFO | 登录游戏: 已完成 +  (+100分)，当前分数: 200/500',
+    '2026-10-27 23:01:45,000 | INFO | 累计消耗120点开拓力: 待完成',
+    '2026-10-27 23:01:45,200 | INFO | 任务无法完成: 累计消灭20个敌人',
+    '2026-10-27 23:01:46,000 | INFO | 邮件奖励已领取',
     '+-----------------------------+',
     '|          停止运行           |',
     '+-----------------------------+',
     '------------------------------------------------------- 完成 ---',
   ].join('\n');
   const okParsed = parseM7aLog(okLog, 0);
-  if (okParsed.status !== 'success') throw new Error(`正常收尾应为 success，实际 ${okParsed.status}`);
-  if (!okParsed.steps.some((s) => s.name === '开始领取奖励')) throw new Error('没解析出小节标题');
+  if (okParsed.status !== 'partial') throw new Error(`有未完成任务应为 partial，实际 ${okParsed.status}`);
+  // 阶段标题进 phases，不进 steps
+  if (!okParsed.phases.includes('开始领取奖励')) throw new Error('没解析出阶段标题');
+  const done = okParsed.steps.find((s) => s.name === '派遣委托或收取1次委托奖励');
+  if (!done || done.ok !== true) throw new Error('没解析出已完成任务');
+  const pending = okParsed.steps.find((s) => s.name === '累计消耗120点开拓力');
+  if (!pending || pending.ok !== false) throw new Error('没解析出未完成任务');
+  if (!okParsed.steps.some((s) => s.name === '邮件奖励' && s.ok)) throw new Error('没解析出已领取奖励');
+  if (!okParsed.notes.includes('200/500')) throw new Error('没解析出活跃度分数');
 
   const failParsed = parseM7aLog('2026-10-27 23:00:00 | ERROR | 启动游戏失败', 1);
   if (failParsed.status !== 'failed') throw new Error(`非 0 退出应为 failed，实际 ${failParsed.status}`);
@@ -70,9 +82,9 @@ check('m7a log parse', () => {
   if (earlyExit.status !== 'partial') throw new Error(`无收尾标记应为 partial，实际 ${earlyExit.status}`);
 
   const report = m7aReport({ gameId: 'sr', mode: 'real', runId: 'x', exitCode: 0, startedAt: '', logText: okLog });
-  if (report.status !== 'success' || report.generatedBy !== 'runner-m7a') throw new Error('m7aReport 字段不对');
+  if (report.generatedBy !== 'runner-m7a') throw new Error('m7aReport 字段不对');
 
-  // 启动横幅也是 `| ... |` 形状，不能当成任务小节。
+  // 启动横幅也是 `| ... |` 形状，不能当成阶段。
   const bannerLog = [
     '|                          欢迎使用 March7th Assistant                          |',
     '|                 https://github.com/moesnow/March7thAssistant                 |',
@@ -80,10 +92,10 @@ check('m7a log parse', () => {
     '|                                   开始日常任务                                 |',
   ].join('\n');
   const bannerParsed = parseM7aLog(bannerLog, 0);
-  if (bannerParsed.steps.length !== 1 || bannerParsed.steps[0].name !== '开始日常任务') {
-    throw new Error(`横幅没被过滤：${JSON.stringify(bannerParsed.steps)}`);
+  if (bannerParsed.phases.length !== 1 || bannerParsed.phases[0] !== '开始日常任务') {
+    throw new Error(`横幅没被过滤：${JSON.stringify(bannerParsed.phases)}`);
   }
-  return `ok=${okParsed.status} fail=${failParsed.status} early=${earlyExit.status} banner=${bannerParsed.steps.length}`;
+  return `partial=${okParsed.status} fail=${failParsed.status} early=${earlyExit.status} steps=${okParsed.steps.length} phases=${okParsed.phases.length}`;
 });
 
 check('bettergi log parse', () => {

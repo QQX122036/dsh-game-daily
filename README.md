@@ -57,7 +57,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
                               dsh --profile headless --patch automation/headless-overlay.yml "<prompt>"（仅技能引擎：原神/崩3）
                                                             │
                                                             ▼
-                                 按 engine 分流执行：原神/崩3 → bettergi-control 或 game-daily-* 技能；星铁 → March7th Assistant.exe daily；绝区零 → 一条龙后端
+                                 按 engine 分流执行：原神/崩3 → bettergi-control 或 game-daily-* 技能；星铁 → March7th Assistant.exe main；绝区零 → 一条龙后端
                                                             │
                                                             ▼
                                   <stateDir>/runs/<game>/<runId>/{meta.json,report.json,stdout.log,screens/}
@@ -110,7 +110,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | `DSH_GAME_DAILY_BETTERGI_MCP` | 自动解析（见下） | bettergi MCP 服务器脚本的显式路径（优先级最高） |
 | `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI 安装位置（体检用） |
 | `DSH_GAME_DAILY_M7A` | 自动解析（见下） | March7th Assistant.exe 的位置（指到 exe 或目录都行），优先级最高 |
-| `DSH_GAME_DAILY_M7A_TASK` | `daily` | 星铁这一轮跑 M7A 的哪个任务（`daily` / `main` / `power` / `fight` …） |
+| `DSH_GAME_DAILY_M7A_TASK` | `main` | 星铁这一轮跑 M7A 的哪个任务（`main`=完整运行 / `daily`=每日实训 / `power`=清体力 / `routine` …） |
 
 ## 随插件自带的工具（bettergi-mcp / bettergi-control）
 
@@ -141,10 +141,11 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 星铁不再走「截图 → 认屏 → 坐标点击」那一套，而是直接调用本机的 **March7thAssistant（三月七小助手，M7A）**：
 
 ```
-engine: m7a   →   "March7th Assistant.exe" daily
+engine: m7a   →   "March7th Assistant.exe" main
 ```
 
-- M7A 自带 OCR 与战斗识别，一条 `daily` 就能跑完「清体力 / 每日实训 / 领奖励」，比逐屏手推稳得多，也不需要坐标校准。
+- M7A 自带 OCR 与战斗识别，`main`（完整运行）一条就能覆盖「启动游戏 / 每日实训 / 清体力 / 领奖励」，比逐屏手推稳得多，也不需要坐标校准。
+- M7A 收尾会「按回车键关闭窗口」：插件给它的 stdin 是 pipe 并定期递回车，否则它会读到 EOF 抛异常、以退出码 1 结束（已修）。
 - 插件侧只做调度与记账：spawn M7A → 收它的 stdout → 按日志小节写 `report.json`（`generatedBy: runner-m7a`），面板、通知、历史照旧。
 - **权限**：M7A 是 `requireAdministrator`。普通权限下连启动都会被 Windows 拒绝（EACCES），所以要从**计划任务（最高权限）**跑；手动「立即运行一次」需要 DSH 本身以管理员身份运行。这种情况下报告会明确写出「需要管理员权限」。
 - 体检里会多一项「March7thAssistant」；找不到程序时可用 `DSH_GAME_DAILY_M7A` 指到 exe 或目录。

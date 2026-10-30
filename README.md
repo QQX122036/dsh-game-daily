@@ -108,7 +108,8 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | `DSH_GAME_DAILY_STATE_DIR` | `$DSH_HOME/game-daily` | 覆盖状态目录 |
 | `DSH_GAME_DAILY_TASK_PREFIX` | `game-daily-` | 覆盖计划任务名前缀 |
 | `DSH_GAME_DAILY_BETTERGI_MCP` | 自动解析（见下） | bettergi MCP 服务器脚本的显式路径（优先级最高） |
-| `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI 安装位置（体检用） |
+| `DSH_GAME_DAILY_BETTERGI` | `D:\software\BetterGI\BetterGI.exe` | BetterGI 位置（体检用；也是原神一条龙的执行入口） |
+| `DSH_GAME_DAILY_BETTERGI_ONEDRAGON` | `日常` | 原神要跑的一条龙配置名（BetterGI `User\OneDragon\<名>.json`） |
 | `DSH_GAME_DAILY_M7A` | 自动解析（见下） | March7th Assistant.exe 的位置（指到 exe 或目录都行），优先级最高 |
 | `DSH_GAME_DAILY_M7A_TASK` | `main` | 星铁这一轮跑 M7A 的哪个任务（`main`=完整运行 / `daily`=每日实训 / `power`=清体力 / `routine` …） |
 
@@ -149,6 +150,26 @@ engine: m7a   →   "March7th Assistant.exe" main
 - 插件侧只做调度与记账：spawn M7A → 收它的 stdout → 按日志小节写 `report.json`（`generatedBy: runner-m7a`），面板、通知、历史照旧。
 - **权限**：M7A 是 `requireAdministrator`。普通权限下连启动都会被 Windows 拒绝（EACCES），所以要从**计划任务（最高权限）**跑；手动「立即运行一次」需要 DSH 本身以管理员身份运行。这种情况下报告会明确写出「需要管理员权限」。
 - 体检里会多一项「March7thAssistant」；找不到程序时可用 `DSH_GAME_DAILY_M7A` 指到 exe 或目录。
+## 三款游戏都是「直连」：没有 agent 参与
+
+插件不再让 headless agent 去转述专业工具的调用。三款游戏各自有专门的自动化程序，
+它们自己的识别、寻路、战斗比 LLM 可靠得多；插件退回到只做三件事：**起进程 → 收日志 → 写报告**。
+
+```
+原神    engine=bettergi    →  BetterGI.exe startOneDragon <配置>
+                              （先确保游戏在跑，再释放单实例，最后跑一条龙；报告解析 BetterGI 日志）
+星铁    engine=m7a         →  March7th Assistant.exe power + daily
+                              （先刷体力再领奖；报告解析 M7A 日志）
+绝区零  engine=zzz-direct  →  一条龙后端 POST /game/run/one-dragon
+                              （报告解析后端状态与各应用执行记录）
+```
+
+执行脚本各自打印一行 `##REPORT {json}`，runner 直接采用它写 `report.json`——面板、通知、历史与
+headless 时代完全一致。崩3 仍走 skill 引擎（headless agent + game-daily 技能），因为没有更合适的现成工具。
+
+**权限**：原神 / 星铁 / 绝区零都是提权进程，所以这三项必须以最高权限运行。计划任务注册时就是
+`RunLevel=Highest`，因此**定时执行不会弹 UAC**；手动点「立即运行一次」时，若 DSH 本身不是管理员，
+会明确报「需要管理员权限」，改用「触发计划任务」即可。
 ## 自动更新
 
 设置页顶部有一条版本栏：**打开面板时会自动去 GitHub 读最新的 `package.json`**，和本地版本比对。

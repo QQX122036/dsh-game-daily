@@ -17,6 +17,7 @@ import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
 import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot } from '../lib/zzz.mjs';
 import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mjs';
 import { parseM7aLog, m7aReport, resolveM7a } from '../lib/m7a.mjs';
+import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -83,6 +84,27 @@ check('m7a log parse', () => {
     throw new Error(`横幅没被过滤：${JSON.stringify(bannerParsed.steps)}`);
   }
   return `ok=${okParsed.status} fail=${failParsed.status} early=${earlyExit.status} banner=${bannerParsed.steps.length}`;
+});
+
+check('bettergi log parse', () => {
+  const log = [
+    '[INF] 领取邮件：已完成',
+    '[INF] 合成树脂：开始',
+    '[INF] "自动秘境"：使用 "原粹树脂", 数量：40',
+    '[INF] 自动秘境：开始奖励识别',
+    '[INF] 体力耗尽或者设置轮次已达标，结束自动秘境',
+    '[INF] 领取尘歌壶奖励:"洞天名称：罗浮洞"',
+    '[WRN] 检查每日奖励结果："未领取"，请手动检查！',
+    '[INF] 一条龙和配置组任务结束',
+  ].join('\n');
+  const parsed = parseBettergiLog(log, 0);
+  if (parsed.status !== 'partial') throw new Error(`每日委托未完成应为 partial，实际 ${parsed.status}`);
+  if (!parsed.steps.some((s) => s.name === '自动秘境')) throw new Error('没解析出自动秘境步骤');
+  if (!parsed.notes.includes('每日委托')) throw new Error('没提示每日委托未完成');
+  if (!/resin=40/.test(parsed.evidence.join(' '))) throw new Error(`树脂用量没统计：${parsed.evidence.join(' ')}`);
+  const done = parseBettergiLog(log.replace('"未领取"', '"已领取"'), 0);
+  if (done.status !== 'success') throw new Error(`全部完成应为 success，实际 ${done.status}`);
+  return `partial=${parsed.status} success=${done.status} steps=${parsed.steps.length}`;
 });
 
 check('state normalize', () => {
@@ -230,7 +252,7 @@ Promise.resolve()
     check('zzz one-dragon integration', () => {
       const zzz = gameById('zzz');
       if (!zzz) throw new Error('缺少绝区零注册项');
-      if (zzz.engine !== 'zzz-od') throw new Error(`绝区零引擎应为 zzz-od：${zzz.engine}`);
+      if (zzz.engine !== 'zzz-direct') throw new Error(`绝区零引擎应为 zzz-direct（直连一条龙后端）：${zzz.engine}`);
       if (zzz.canRun !== true) throw new Error('绝区零应当可以运行');
       if (!zzz.defaultTime) throw new Error('绝区零缺少默认时间');
       const realMcp = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..', 'tools', 'zzz-od-mcp', 'zzz-od-mcp.mjs');

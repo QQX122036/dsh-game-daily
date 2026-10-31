@@ -7,4 +7,5 @@ automation/*.pid
 automation/register-result.json
 automation/tasks.json
 automation/headless-overlay.yml
+tools/bettergi-mcp/cache/
 .DS_Store

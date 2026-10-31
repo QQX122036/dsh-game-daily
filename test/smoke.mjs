@@ -16,8 +16,11 @@ import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '..
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
 import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot } from '../lib/zzz.mjs';
 import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mjs';
-import { parseM7aLog, m7aReport, resolveM7a } from '../lib/m7a.mjs';
+import { parseM7aLog, m7aReport, resolveM7a, ensurePowerPlan } from '../lib/m7a.mjs';
 import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
+import { businessDay, businessDayOfRunId, isPreviousCycle, DEFAULT_RESET_HOUR } from '../lib/dailycycle.mjs';
+import { todayRunStatus, acquireRunLock } from '../lib/runner.mjs';
+import { zzzAppSnapshot, collectZzzAppRecords, appFingerprint } from '../lib/zzzrun.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -119,8 +122,177 @@ check('bettergi log parse', () => {
   return `partial=${parsed.status} success=${done.status} steps=${parsed.steps.length}`;
 });
 
-check('state normalize', () => {
-  const bad = normalizeState({ ui: { lastGame: 'nope' }, games: { hi: { enabled: 'yes', timeoutMin: 999, schedule: { time: '25:99' } } } });
+check('daily cycle（4 点重置）', () => {
+  if (DEFAULT_RESET_HOUR !== 4) throw new Error(`默认重置时刻应为 4 点：${DEFAULT_RESET_HOUR}`);
+  // 22:40 属于当天；00:28 仍属于前一天
+  if (businessDay(new Date(2026, 9, 31, 22, 40)) !== '20261031') {
+    throw new Error(`22:40 应属 10-31：${businessDay(new Date(2026, 9, 31, 22, 40))}`);
+  }
+  if (businessDay(new Date(2026, 9, 31, 0, 28)) !== '20261030') {
+    throw new Error(`00:28 应属 10-30：${businessDay(new Date(2026, 9, 31, 0, 28))}`);
+  }
+  // 跨月：11-01 00:28 仍属 10-31
+  if (businessDay(new Date(2026, 10, 1, 0, 28)) !== '20261031') {
+    throw new Error(`11-01 00:28 应属 10-31：${businessDay(new Date(2026, 10, 1, 0, 28))}`);
+  }
+  if (businessDayOfRunId('20261031-002805') !== '20261030') throw new Error('runId 00:28 归到错的天');
+  if (businessDayOfRunId('20261031-223418') !== '20261031') throw new Error('runId 22:34 归到错的天');
+  if (businessDayOfRunId('乱写的') !== '') throw new Error('非法 runId 应返回空串');
+  if (isPreviousCycle('20261031-002805', 4, new Date(2026, 9, 31, 22, 40)) !== true) {
+    throw new Error('00:28 那轮应判为上一周期');
+  }
+  if (isPreviousCycle('20261031-223418', 4, new Date(2026, 9, 31, 22, 40)) !== false) {
+    throw new Error('22:34 那轮应判为当天');
+  }
+  return '00:28→前一天、22:34→当天，跨月正确';
+});
+
+check('幂等按业务日（跨天补跑不算今天）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-idem-'));
+  try {
+    // 0:28 的补跑（属于 10-30）成功
+    writeJson(reportPathOf(dir, 'sr', '20261031-002805'), {
+      schemaVersion: 1,
+      status: 'success',
+      mode: 'real',
+      startedAt: '2026-10-30T16:28:05.802Z',
+      endedAt: '2026-10-30T16:30:28.580Z',
+      steps: [],
+      generatedBy: 'runner-m7a',
+    });
+    // 幂等跳过产生的假报告（不该算数）
+    writeJson(reportPathOf(dir, 'sr', '20261031-220735'), {
+      schemaVersion: 1,
+      status: 'success',
+      mode: 'real',
+      startedAt: '2026-10-31T14:07:35.063Z',
+      endedAt: '2026-10-31T14:07:35.063Z',
+      steps: [],
+      generatedBy: 'runner-idempotent-skip',
+    });
+    const at = new Date(2026, 9, 31, 22, 40);
+    const found = todayRunStatus(dir, 'sr', at, { resetHour: 4 });
+    if (found) throw new Error(`0:28 的补跑与跳过报告都不该算今天：${JSON.stringify(found)}`);
+
+    // 真正当天跑的一轮 → 应该被认出来
+    writeJson(reportPathOf(dir, 'sr', '20261031-223418'), {
+      schemaVersion: 1,
+      status: 'success',
+      mode: 'real',
+      startedAt: '2026-10-31T14:34:18.482Z',
+      endedAt: '2026-10-31T14:40:00.000Z',
+      steps: [],
+      generatedBy: 'runner-m7a',
+    });
+    const hit = todayRunStatus(dir, 'sr', at, { resetHour: 4 });
+    if (!hit || hit.runId !== '20261031-223418') throw new Error(`当天那轮没被认出来：${JSON.stringify(hit)}`);
+    return '跨天补跑不算、跳过不算、当天真跑才算';
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('zzz 应用记录按内容比对', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-zzzrec-'));
+  try {
+    const recDir = path.join(dir, 'config', '01', 'app_run_record');
+    fs.mkdirSync(recDir, { recursive: true });
+    const file = path.join(recDir, 'email.yml');
+    fs.writeFileSync(file, "run_status: 2\ndt: '20261030'\nrun_time: 10-30 23:00\n", 'utf8');
+    const before = zzzAppSnapshot(dir);
+    if (before.email === undefined) throw new Error('快照没读到 email');
+    // 模拟「今天又跑了一遍」：文件同名，但内容变了
+    fs.writeFileSync(file, "run_status: 2\ndt: '20261031'\nrun_time: 10-31 22:10\n", 'utf8');
+    const changed = collectZzzAppRecords(dir, Date.now() - 60000, before);
+    if (!changed.some((item) => item.name === 'email')) {
+      throw new Error(`内容变了却没算跑过：${JSON.stringify(changed)}`);
+    }
+    // 内容没变 → 不算跑过
+    const same = collectZzzAppRecords(dir, Date.now() - 60000, zzzAppSnapshot(dir));
+    if (same.length) throw new Error(`内容没变却被算成跑过：${JSON.stringify(same)}`);
+    if (!appFingerprint(file).includes('20261031')) throw new Error('指纹没读到 dt');
+    return '同名不同内容=真跑过，内容不变=没跑';
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('m7a 活跃度已满 ≠ 失败', () => {
+  const log = [
+    '|            开始日常任务             |',
+    '2026-10-31 00:30:07,126 | INFO | 检测到本日活跃度已满提示，跳过后续任务检测',
+    '2026-10-31 00:30:09,250 | INFO | 未检测到每日实训奖励',
+    '|            停止运行             |',
+  ].join('\n');
+  const parsed = parseM7aLog(log, 0);
+  if (parsed.status !== 'success') throw new Error(`活跃度已满应为 success，实际 ${parsed.status}`);
+  if (!parsed.notes.includes('活跃度已满')) throw new Error('没写明活跃度已满');
+  if (!parsed.steps.some((s) => s.name === '活跃度')) throw new Error('没记活跃度步骤');
+  const report = m7aReport({
+    gameId: 'sr',
+    mode: 'real',
+    runId: '20261031-002805',
+    exitCode: 0,
+    startedAt: new Date(2026, 9, 31, 0, 28).toISOString(),
+    logText: log,
+    resetHour: 4,
+  });
+  if (!report.notes.includes('上一日的日常')) throw new Error(`跨天提示缺失：${report.notes}`);
+  return `status=${parsed.status} 跨天提示 ok`;
+});
+
+check('m7a 体力计划自愈', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-plan-'));
+  try {
+    const file = path.join(dir, 'config.yaml');
+    // 模拟 M7A 跑完后把计划删空的样子
+    fs.writeFileSync(file, 'locales: zh_CN\npower_enable: true\npower_plan: []\npower_plan_keep: false # 注释\n', 'utf8');
+    const m7a = { config: file, exe: path.join(dir, 'March7th Assistant.exe') };
+    const first = ensurePowerPlan(m7a, [['侵蚀隧洞', '睿治之径', 3]]);
+    if (!first.ok || first.changed !== true) throw new Error(`第一次应写入：${JSON.stringify(first)}`);
+    const text = fs.readFileSync(file, 'utf8');
+    if (!/power_plan: \[\["侵蚀隧洞","睿治之径",3\]\]/.test(text)) throw new Error(`计划没写进去：${text}`);
+    if (!/^power_plan_keep: true/m.test(text)) throw new Error(`power_plan_keep 没打开：${text}`);
+    // 幂等：再来一次不该再改
+    const second = ensurePowerPlan(m7a, [['侵蚀隧洞', '睿治之径', 3]]);
+    if (!second.ok || second.changed !== false) throw new Error(`重复调用不应再写：${JSON.stringify(second)}`);
+    return '计划补回 + keep 打开 + 幂等 ok';
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('运行互斥锁', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-lock-'));
+  try {
+    const first = acquireRunLock(dir, { waitMs: 0 });
+    if (!first.ok) throw new Error(`第一次应拿到锁：${JSON.stringify(first)}`);
+    // 第二个（同一进程持有）应拿不到
+    const second = acquireRunLock(dir, { waitMs: 0 });
+    if (second.ok) {
+      second.release();
+      first.release();
+      throw new Error('同一时刻不该拿到第二把锁');
+    }
+    if (!second.error) throw new Error('拿不到锁时应给出原因');
+    // 释放后可以再拿
+    first.release();
+    const third = acquireRunLock(dir, { waitMs: 0 });
+    if (!third.ok) throw new Error(`释放后应能再拿：${JSON.stringify(third)}`);
+    third.release();
+    // 死进程留下的锁应被当作过期锁接管
+    const lock = path.join(dir, 'automation', 'runner.lock');
+    fs.writeFileSync(lock, JSON.stringify({ pid: 999999, at: new Date().toISOString() }), 'utf8');
+    const fourth = acquireRunLock(dir, { waitMs: 0 });
+    if (!fourth.ok) throw new Error(`过期锁应被接管：${JSON.stringify(fourth)}`);
+    fourth.release();
+    return '互斥 / 释放 / 过期锁接管 ok';
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('state normalize', () => {  const bad = normalizeState({ ui: { lastGame: 'nope' }, games: { hi: { enabled: 'yes', timeoutMin: 999, schedule: { time: '25:99' } } } });
   if (bad.ui.lastGame !== 'genshin') throw new Error('非法 lastGame 未回落');
   if (bad.games.hi.enabled !== false) throw new Error('enabled 非 true 应视为 false');
   if (bad.games.hi.timeoutMin !== 180) throw new Error(`timeout 999 未夹到 180：${bad.games.hi.timeoutMin}`);

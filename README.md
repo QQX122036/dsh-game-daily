@@ -112,6 +112,7 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | `DSH_GAME_DAILY_BETTERGI_ONEDRAGON` | `日常` | 原神要跑的一条龙配置名（BetterGI `User\OneDragon\<名>.json`） |
 | `DSH_GAME_DAILY_M7A` | 自动解析（见下） | March7th Assistant.exe 的位置（指到 exe 或目录都行），优先级最高 |
 | `DSH_GAME_DAILY_M7A_TASK` | `main` | 星铁这一轮跑 M7A 的哪个任务（`main`=完整运行 / `daily`=每日实训 / `power`=清体力 / `routine` …） |
+| `DSH_GAME_DAILY_M7A_POWER_PLAN` | `侵蚀隧洞,睿治之径,3` | 体力计划（3 次睿治之径 = 120 开拓力，正好凑满每日实训那条 100 活跃度） |
 
 ## 随插件自带的工具（bettergi-mcp / bettergi-control）
 
@@ -150,6 +151,27 @@ engine: m7a   →   "March7th Assistant.exe" main
 - 插件侧只做调度与记账：spawn M7A → 收它的 stdout → 按日志小节写 `report.json`（`generatedBy: runner-m7a`），面板、通知、历史照旧。
 - **权限**：M7A 是 `requireAdministrator`。普通权限下连启动都会被 Windows 拒绝（EACCES），所以要从**计划任务（最高权限）**跑；手动「立即运行一次」需要 DSH 本身以管理员身份运行。这种情况下报告会明确写出「需要管理员权限」。
 - 体检里会多一项「March7thAssistant」；找不到程序时可用 `DSH_GAME_DAILY_M7A` 指到 exe 或目录。
+- **体力计划会被插件补回去**：M7A 的 `power_plan_keep: false` 表示「跑完删掉已完成条目」，
+  于是每天跑完计划，次日就只剩「清体力」（把 300 开拓力全砸进拟造花萼，30 轮 ≈ 40 分钟）。
+  插件在每次跑之前把 `power_plan` 写回 `[["侵蚀隧洞","睿治之径",3]]` 并打开 `power_plan_keep`（写前自动备份 `config.yaml.bak-<时间戳>`）。
+
+## 「今天跑过没有」按**业务日**算（凌晨 4 点重置）
+
+米哈游的日常在**凌晨 4 点**重置。插件判断「今天是否已经跑过」时，用的是**业务日**而不是运行日期：
+
+```
+10-31 00:28 跑的那一轮  → 业务日 10-30   （游戏还没重置，做的仍是昨天的日常）
+10-31 10:30 跑的那一轮  → 业务日 10-31
+```
+
+踩过的坑：机器晚上关机，第二天 0:28 开机触发补跑，M7A 发现「活跃度已满」（因为做的还是昨天的内容），
+插件却按运行日期记了一笔 success；于是当天 10:30 的排班全被幂等挡掉——**那一天的日常一次都没做**。
+
+现在三条规则一起生效：
+
+1. 幂等只认**同一业务日**里的运行（`lib/dailycycle.mjs`）；
+2. 「幂等跳过」生成的假报告**不算数**（它根本没拉起游戏）；
+3. 报告里会写明「本轮在凌晨 4 点重置点之前开始，做的是上一日的日常」，避免看报告时误判。
 ## 三款游戏都是「直连」：没有 agent 参与
 
 插件不再让 headless agent 去转述专业工具的调用。三款游戏各自有专门的自动化程序，

@@ -22,7 +22,9 @@ function Write-Log([string]$message) {
 
 function Write-Result($value) {
   $json = $value | ConvertTo-Json -Depth 8
-  Set-Content -Path $resultPath -Value $json -Encoding UTF8
+  # 不能用 Set-Content -Encoding UTF8：PS 5.1 会写 BOM，
+  # 而读取端 JSON.parse 不剥 BOM 就直接抛错 —— 注册结果会永远读不出来。
+  [IO.File]::WriteAllText($resultPath, $json, (New-Object Text.UTF8Encoding($false)))
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -32,12 +34,15 @@ Write-Log "start admin=$isAdmin dryRun=$($DryRun.IsPresent) remove=$($Remove.IsP
 
 if (-not $isAdmin -and -not $DryRun.IsPresent -and -not $NoElevate.IsPresent) {
   Write-Log 'not elevated; relaunch via UAC and wait'
-  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-StateDir', $StateDir)
-  if ($Remove.IsPresent) { $argList += '-Remove' }
-  if ($All.IsPresent) { $argList += '-All' }
+  # Start-Process -ArgumentList 传数组会被拼成一行且**不加引号**，
+  # 路径里有空格（用户名含空格）时子进程会拿到被截断的参数 —— 自己拼带引号的字符串。
+  $quoted = '"' + $StateDir + '"'
+  $argLine = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -StateDir ' + $quoted
+  if ($Remove.IsPresent) { $argLine += ' -Remove' }
+  if ($All.IsPresent) { $argLine += ' -All' }
   try {
     $exe = (Get-Process -Id $PID).Path
-    $child = Start-Process -FilePath $exe -Verb RunAs -ArgumentList $argList -PassThru -WindowStyle Hidden
+    $child = Start-Process -FilePath $exe -Verb RunAs -ArgumentList $argLine -PassThru -WindowStyle Hidden
     $child.WaitForExit(600000) | Out-Null
     Write-Log "elevated exit code $($child.ExitCode)"
     $deadline = (Get-Date).AddSeconds(30)
@@ -157,8 +162,13 @@ foreach ($game in $games) {
     $action = New-ScheduledTaskAction -Execute $nodeExe -Argument $argument -WorkingDirectory $StateDir
 
     $catchUp = [bool]$game.catchUp
-    $limit = New-TimeSpan -Minutes ($budget + 10)
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable:$catchUp -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit $limit
+    # 时限要盖住「等锁 + 跑 + 收尾」：等锁最多 20 分钟（DSH_GAME_DAILY_WAIT_MS），
+    # 看门狗自己会提前 5 分钟收尾，10 分钟留给写报告与清理。
+    $limit = New-TimeSpan -Minutes ($budget + 30)
+    # -DontStopOnIdleEnd 很关键：默认的 IdleSettings 是 StopOnIdleEnd=true，
+    # 用户不在电脑前时系统判定空闲，一小时后调度器会**直接杀掉整棵进程树** ——
+    # 日常跑到一半被腰斩，而且进程被杀就不会写 report.json（现场三例只有 meta 没有 report）。
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable:$catchUp -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit $limit -DontStopOnIdleEnd
     $principal = New-ScheduledTaskPrincipal -UserId $userName -LogonType Interactive -RunLevel Highest
 
     if ($DryRun.IsPresent) {

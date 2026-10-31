@@ -276,7 +276,24 @@ export function apply(ctx) {
           /* ignore */
         }
         const known = (state.runs[game.id] || []).find((row) => row.runId === run.runId);
-        if (known) continue;
+        if (known) {
+          // 报告可能被后写覆盖（子进程先写兜底 failed，直连脚本几分钟后才写真报告）。
+          // 以前「已记账就不再管」，于是磁盘上是 partial、面板上永远显示 failed。
+          if (known.status !== run.summary.status) {
+            store.mutate((current) => {
+              const row = (current.runs[game.id] || []).find((r) => r.runId === run.runId);
+              if (row) row.status = run.summary.status;
+              const gameState = current.games[game.id];
+              if (gameState && gameState.lastRunId === run.runId) gameState.lastStatus = run.summary.status;
+            });
+          }
+          // 通知失败（delivered=false）时补发一次；已经弹过的不再重复。
+          if (known.delivered !== true) {
+            const report = readReport(env.stateDir, game.id, run.runId) || {};
+            if (!report.notifiedAt) done.push({ game, run, summary: known, retry: true });
+          }
+          continue;
+        }
         const summary = summarizeRun(run.runId, meta, { status: run.summary.status, mode: run.summary.mode });
         store.recordRun(game.id, { ...summary, mode: run.summary.mode || summary.mode });
         done.push({ game, run, summary });
@@ -314,16 +331,24 @@ export function apply(ctx) {
       const { game, run, summary } = item;
       const report = item.report || readReport(env.stateDir, game.id, run.runId) || {};
       const statusText = reportStatusText(summary.status);
-      try {
-        notify({
-          stateDir: env.stateDir,
-          title: `${game.title} 日常：${statusText}`,
-          body: report.notes || `runId ${run.runId} · 详见设置页「游戏日常」`,
-        });
-      } catch {
-        /* 通知失败不影响记账 */
+      // 计划任务自己已经弹过通知了（run-headless.mjs 里有 notify），
+      // 这里再弹一次就是每轮两条 toast + 两个汇报会话（每个都要烧一次模型）。
+      const alreadyNotified = Boolean(report.notifiedAt) || (meta && meta.notifiedAt);
+      let notified = alreadyNotified;
+      if (!alreadyNotified) {
+        try {
+          const result = notify({
+            stateDir: env.stateDir,
+            title: `${game.title} 日常：${statusText}`,
+            body: report.notes || `runId ${run.runId} · 详见设置页「游戏日常」`,
+          });
+          // notify 失败不算已送达：保持 delivered=false，下一轮 reconcile 会再试一次。
+          notified = Boolean(result && result.ok);
+        } catch {
+          /* 通知失败不影响记账 */
+        }
       }
-      if (store.get().ui.reportSessions !== false) {
+      if (!alreadyNotified && store.get().ui.reportSessions !== false) {
         try {
           const result = await openSession(ctx, {
             title: `游戏日常 · ${game.title} 汇报`,
@@ -343,7 +368,7 @@ export function apply(ctx) {
       store.mutate((current) => {
         const list = current.runs[game.id] || [];
         const row = list.find((entry) => entry.runId === run.runId);
-        if (row) row.delivered = true;
+        if (row) row.delivered = notified === true;
       });
     }
 

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { startRun, readRunner, isRunning, stopRun } from '../lib/runner.mjs';
-import { readReport, reportPathOf, runDirOf, readJsonSafe, writeJson } from '../lib/report.mjs';
+import { readReport, reportPathOf, runDirOf, readJsonSafe, writeJson, newRunId } from '../lib/report.mjs';
 import { dailySummary } from '../lib/daily-state.mjs';
 import { notify } from '../lib/notify.mjs';
 import { gameById } from '../lib/games.mjs';
@@ -89,6 +89,35 @@ async function main() {
   });
   if (!started.ok) {
     log(stateDir, `start failed: ${started.error}`);
+    // 这一轮也要留下痕迹：写一份失败报告 + 弹通知。
+    // 否则「抢不到锁/被别的游戏占着」这种失败会**静默蒸发** ——
+    // 任务计划器里只有 LastTaskResult=1，面板和历史里什么都没有。
+    const runId = newRunId();
+    const runDir = runDirOf(stateDir, args.game, runId);
+    try {
+      fs.mkdirSync(runDir, { recursive: true });
+      writeJson(reportPathOf(stateDir, args.game, runId), {
+        schemaVersion: 1,
+        runId,
+        game: args.game,
+        mode: args.mode,
+        status: 'failed',
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        steps: [],
+        evidence: ['start-failed'],
+        screenshots: [],
+        notes: `没能开始这一轮：${started.error}`,
+        generatedBy: 'run-headless-start-failed',
+      });
+    } catch {
+      /* ignore */
+    }
+    notify({
+      stateDir,
+      title: `${game.title} 日常：未执行`,
+      body: `没能开始这一轮：${started.error}`,
+    });
     process.exit(1);
   }
   log(stateDir, `headless spawned pid=${started.pid} runId=${started.runId}`);
@@ -124,24 +153,32 @@ async function main() {
     }
     const stopDeadline = Date.now() + 60 * 1000;
     while (isRunning(stateDir, args.game) && Date.now() < stopDeadline) await sleep(2000);
-    if (!readReport(stateDir, args.game, started.runId)) {
-      try {
-        writeJson(reportPathOf(stateDir, args.game, started.runId), {
-          schemaVersion: 1,
-          status: 'timeout',
-          mode: args.mode,
-          runId: started.runId,
-          game: args.game,
-          startedAt: new Date(Date.now() - budgetMin * 60 * 1000).toISOString(),
-          endedAt: new Date().toISOString(),
-          steps: [],
-          evidence: [`watchdog=${budgetMin}min`, `timeoutMin=${timeoutMin}`],
-          notes: `超过看门狗预算 ${budgetMin} 分钟，插件主动停止；未拿到 headless 报告。可调大排班超时，或检查是否有窗口频繁抢焦点导致反复暂停。`,
-          generatedBy: 'run-headless-watchdog',
-        });
-      } catch {
-        /* ignore */
-      }
+    // 超时就是超时：子进程被 taskkill 掉时，runner 的退出回调会先写一份 status=failed 的
+    // 兜底报告，于是这里「报告已存在」就不写了 —— 报告说失败、通知说超时、状态记失败，
+    // 三方对不上。这里无条件把状态改写成 timeout。
+    try {
+      const existing = readReport(stateDir, args.game, started.runId);
+      writeJson(reportPathOf(stateDir, args.game, started.runId), {
+        ...(existing || {}),
+        schemaVersion: 1,
+        status: 'timeout',
+        mode: args.mode,
+        runId: started.runId,
+        game: args.game,
+        startedAt: (existing && existing.startedAt) || new Date(Date.now() - budgetMin * 60 * 1000).toISOString(),
+        endedAt: new Date().toISOString(),
+        steps: (existing && existing.steps) || [],
+        evidence: [...((existing && existing.evidence) || []), `watchdog=${budgetMin}min`, `timeoutMin=${timeoutMin}`],
+        notes: [
+          (existing && existing.notes) || '',
+          `超过看门狗预算 ${budgetMin} 分钟，插件主动停止。可调大排班超时，或检查是否有窗口频繁抢焦点导致反复暂停。`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        generatedBy: 'run-headless-watchdog',
+      });
+    } catch {
+      /* ignore */
     }
     log(stateDir, `watchdog: stopped after ${budgetMin}min, report written`);
     notify({
@@ -172,11 +209,19 @@ async function main() {
   const statusText = { success: '已完成', partial: '部分完成', failed: '失败', timeout: '超时' }[status] || status;
   const doneText = summary.done.length ? `完成 ${summary.done.length} 项` : '';
   const gapText = summary.gaps.length ? `，还差：${summary.gaps.join('、')}` : '';
-  notify({
+  const notified = notify({
     stateDir,
     title: `${game.title} 日常：${statusText}`,
     body: `${doneText}${gapText}`,
   });
+  // 记下「已经通知过」：DSH 开着时它的 reconcile 也会想通知这一轮，
+  // 没有这个标记就会每轮弹两次 toast、开两个汇报会话（每个都烧一次模型）。
+  try {
+    const marked = { ...report, notifiedAt: new Date().toISOString(), notified: Boolean(notified && notified.ok) };
+    writeJson(reportFile, marked);
+  } catch {
+    /* ignore */
+  }
 
   // 退出码区分：0=成功、1=失败、2=部分完成、3=超时。
   // 任务计划器里能一眼看出「今天只是没做完」，而不是和失败混在一起。

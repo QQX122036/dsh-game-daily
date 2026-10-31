@@ -277,13 +277,13 @@ check('m7a 体力计划自愈', () => {
   }
 });
 
-check('运行互斥锁', () => {
+await checkAsync('运行互斥锁', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-lock-'));
   try {
-    const first = acquireRunLock(dir, { waitMs: 0 });
+    const first = await acquireRunLock(dir, { waitMs: 0 });
     if (!first.ok) throw new Error(`第一次应拿到锁：${JSON.stringify(first)}`);
     // 第二个（同一进程持有）应拿不到
-    const second = acquireRunLock(dir, { waitMs: 0 });
+    const second = await acquireRunLock(dir, { waitMs: 0 });
     if (second.ok) {
       second.release();
       first.release();
@@ -292,13 +292,13 @@ check('运行互斥锁', () => {
     if (!second.error) throw new Error('拿不到锁时应给出原因');
     // 释放后可以再拿
     first.release();
-    const third = acquireRunLock(dir, { waitMs: 0 });
+    const third = await acquireRunLock(dir, { waitMs: 0 });
     if (!third.ok) throw new Error(`释放后应能再拿：${JSON.stringify(third)}`);
     third.release();
     // 死进程留下的锁应被当作过期锁接管
     const lock = path.join(dir, 'automation', 'runner.lock');
     fs.writeFileSync(lock, JSON.stringify({ pid: 999999, at: new Date().toISOString() }), 'utf8');
-    const fourth = acquireRunLock(dir, { waitMs: 0 });
+    const fourth = await acquireRunLock(dir, { waitMs: 0 });
     if (!fourth.ok) throw new Error(`过期锁应被接管：${JSON.stringify(fourth)}`);
     fourth.release();
     return '互斥 / 释放 / 过期锁接管 ok';

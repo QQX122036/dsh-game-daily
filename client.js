@@ -21,6 +21,12 @@ window.__ModuleLoader__.load({
         sectionRun: '执行',
         sectionDeps: '依赖体检',
         sectionRuns: '最近运行',
+        sectionDaily: '今日清单',
+        dailyEmpty: '今天还没跑过',
+        dailyDone: '已完成',
+        dailyGap: '还差',
+        dailyRuns: '今天跑了',
+        dailyTime: '次',
         mode: '模式',
         modeReal: '真实执行',
         modeDry: '演练（只看不点）',
@@ -101,6 +107,12 @@ window.__ModuleLoader__.load({
         sectionRun: 'Execution',
         sectionDeps: 'Dependencies',
         sectionRuns: 'Recent runs',
+        sectionDaily: 'Today checklist',
+        dailyEmpty: 'Not run yet today',
+        dailyDone: 'Done',
+        dailyGap: 'Missing',
+        dailyRuns: 'Runs today',
+        dailyTime: '',
         mode: 'Mode',
         modeReal: 'Real',
         modeDry: 'Dry run (no clicks)',
@@ -203,6 +215,8 @@ window.__ModuleLoader__.load({
       '.gd-check-head{display:flex;align-items:center;gap:8px;justify-content:space-between}',
       '.gd-detail{font-size:12px;color:var(--dsw-alias-label-tertiary,inherit);white-space:pre-wrap;word-break:break-all;line-height:1.5}',
       '.gd-runs{display:flex;flex-direction:column;gap:6px}',
+      '.gd-checklist{display:flex;flex-direction:column;gap:6px}',
+      '.gd-checkitem{display:flex;align-items:center;gap:8px;font-size:13px;line-height:1.5}',
       '.gd-run{display:flex;gap:10px;align-items:center;justify-content:space-between;border-bottom:1px dashed var(--dsw-alias-border-l2,#8883);padding:6px 0;font-size:12.5px}',
       '.gd-modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:60;padding:24px}',
       '.gd-modal-body{background:var(--dsw-alias-bg-overlay,#1b1b1f);border:1px solid var(--dsw-alias-border-l2,#8884);border-radius:12px;max-width:820px;width:100%;max-height:80vh;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}',
@@ -336,6 +350,10 @@ window.__ModuleLoader__.load({
       const paused = !game.canRun;
       const task = game.task || {};
       const runs = Array.isArray(game.runs) ? game.runs : [];
+      const daily = game.daily || {};
+      const dailyDone = Array.isArray(daily.done) ? daily.done : [];
+      const dailyGaps = Array.isArray(daily.gaps) ? daily.gaps : [];
+      const dailyRuns = Array.isArray(daily.runs) ? daily.runs.length : 0;
       const probeData = probe || null;
       const checks = probeData && Array.isArray(probeData.checks) ? probeData.checks : [];
       const taskNote = task.exists
@@ -506,6 +524,28 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'gd-detail' }, check.detail || '')
                 )
               )
+        ),
+
+        h(
+          'div',
+          { className: 'gd-card' },
+          h('p', { className: 'gd-section-title' }, t('sectionDaily')),
+          dailyRuns === 0
+            ? h('p', { className: 'gd-empty' }, t('dailyEmpty'))
+            : h('div', { className: 'gd-checklist' },
+              h('div', { className: 'gd-checkitem' },
+                Badge({ tone: daily.complete ? 'ok' : 'warn', children: daily.complete ? t('dailyDone') : t('dailyGap') }),
+                h('span', null, `${t('dailyRuns')} ${dailyRuns} ${t('dailyTime')}`)
+              ),
+              dailyDone.map((name) => h('div', { className: 'gd-checkitem', key: `d-${name}` },
+                Badge({ tone: 'ok', children: '✓' }),
+                h('span', null, name)
+              )),
+              dailyGaps.map((name) => h('div', { className: 'gd-checkitem', key: `g-${name}` },
+                Badge({ tone: 'missing', children: '!' }),
+                h('span', null, name)
+              ))
+            )
         ),
 
         h(

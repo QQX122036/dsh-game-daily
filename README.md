@@ -92,10 +92,53 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
 | POST | `/update` | 立即更新：有 `.git` 走 `git pull --ff-only`，否则下载 zip 覆盖；返回 `{from, to, method, restartRequired}` |
 | POST | `/reconcile` | 手动触发一次对账（平时每 60s 自动跑） |
 
+## 每日检查点（每个游戏今天做到哪一步）
+
+插件为每款游戏维护一份**当日清单**：`<stateDir>/daily/<gameId>.json`。
+
+```jsonc
+{
+  "days": {
+    "20261031": {
+      "status": "partial",              // 当天总体状态
+      "done": { "登录游戏": { "ok": true, "at": "...", "runId": "..." } },
+      "gaps": { "每日奖励": { "ok": false, "at": "...", "detail": "每日委托未完成，奖励未领取" } },
+      "runs": ["20261031-223418"],
+      "updatedAt": "..."
+    }
+  }
+}
+```
+
+- 每轮跑完把报告里的 `steps[]` 合并进清单（后一次的成功覆盖前一次的失败）。
+- 面板上直接显示「今日清单：已完成 N 项 / 还差 X」。
+- **幂等不再是一票否决**：只有「当天成功且没有缺口」才跳过；上一轮 partial 时会按缺口补跑，
+  但每个游戏每天的自动重试次数有限（`autoRetry`，原神/绝区零为 0 —— 重跑也补不上还白花体力，
+  星铁为 2 —— M7A 自己会查缺补漏）。
+
+## 排班的三条硬规则
+
+1. **不早于重置时刻**：米哈游日常凌晨 4 点重置。排班时间早于它会被顺延到 4:05；
+   触发时刻仍在 4 点之前的运行会直接跳过并说明原因（那一刻做的还是昨天的日常，
+   还会把工具里「今天已做过」的状态写坏）。
+2. **触发起点落在未来**：注册计划任务时，如果今天的时间点已经过去，起点用明天 ——
+   否则 Windows 的 `StartWhenAvailable` 会在注册完成的瞬间就把三条任务一起补跑起来。
+3. **同一时刻只跑一个游戏**：插件有全局互斥锁（`runner.lock`），
+   补跑时三条任务同秒被拉起也不会互相抢前台、互相关进程。
+
+## 报告与通知
+
+- 计划任务跑完会**直接弹一条 Windows 通知**，不依赖 DSH 开着 ——
+  否则「人不在电脑前、DSH 没启动」的那天就完全没人知道结果。
+- 退出码区分：`0`=成功、`1`=失败、`2`=部分完成、`3`=超时，任务计划器里能一眼分辨。
+
 ## 数据位置
 
 - 状态与运行产物：`$DSH_HOME/game-daily/`（默认 `%USERPROFILE%\.dsh\game-daily`）
-  - `state.json`（原子写）、`runs/<game>/<runId>/`、`automation/{tasks.json,game-daily-register.ps1,register-result.json,headless-overlay.yml,run-headless.log}`、`notifications.log`
+  - `state.json`（原子写）、`daily/<gameId>.json`（每日检查点）、
+    `runs/<game>/<runId>/`、
+    `automation/{tasks.json,game-daily-register.ps1,register-result.json,headless-overlay.yml,run-headless.log}`、
+    `notifications.log`
 
 ## 环境变量
 

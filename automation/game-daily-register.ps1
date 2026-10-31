@@ -72,6 +72,7 @@ foreach ($game in $games) {
     time = [string]$game.time
     action = 'skipped'
     error = ''
+    note = ''
   }
   $taskName = [string]$game.taskName
   if (-not $taskName) {
@@ -101,6 +102,21 @@ foreach ($game in $games) {
     $timeParts = ([string]$game.time).Split(':')
     if ($timeParts.Count -ne 2) { throw "bad time: $($game.time)" }
     $at = (Get-Date).Date.AddHours([int]$timeParts[0]).AddMinutes([int]$timeParts[1])
+    # 日常凌晨 resetHour 点重置：排班早于它没有意义（那一刻做的还是昨天的日常，
+    # 还会把「今天已做过」的状态写坏）。把触发时间夹到重置之后 5 分钟。
+    $resetHour = 4
+    if ($game.PSObject.Properties.Name -contains 'resetHour' -and $null -ne $game.resetHour) {
+      $resetHour = [int]$game.resetHour
+    }
+    $earliest = (Get-Date).Date.AddHours($resetHour).AddMinutes(5)
+    if ($at -lt $earliest) {
+      $entry.note = "排班时间早于日常重置时刻（$($resetHour):00），已顺延到 $($earliest.ToString('HH:mm'))"
+      $at = $earliest
+    }
+    # 触发器起点只能落在未来：若今天的这个时间点已经过去，用明天。
+    # 否则 StartWhenAvailable 会认为「错过了今天的触发」，
+    # 注册完成的瞬间就把这一轮补跑起来（今天 22:07 三条任务同时被拉起就是这么来的）。
+    if ($at -le (Get-Date)) { $at = $at.AddDays(1) }
 
     if ($game.weekdays -is [array] -and @($game.weekdays).Count -gt 0) {
       $names = @()

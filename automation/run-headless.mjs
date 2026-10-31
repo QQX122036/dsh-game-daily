@@ -6,6 +6,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { startRun, readRunner, isRunning, stopRun } from '../lib/runner.mjs';
 import { readReport, reportPathOf, runDirOf, readJsonSafe, writeJson } from '../lib/report.mjs';
+import { dailySummary } from '../lib/daily-state.mjs';
+import { notify } from '../lib/notify.mjs';
 import { gameById } from '../lib/games.mjs';
 
 /** 读 state.json 里的插件级 UI 开关（前台守护）与该游戏的超时设置。 */
@@ -56,6 +58,20 @@ async function main() {
     process.exit(2);
   }
   log(stateDir, `scheduled run start game=${args.game} mode=${args.mode} profile=${args.profile}`);
+
+  // 日常凌晨重置（米哈游 4 点）。在重置之前触发的那一轮，做的其实是**昨天**的日常，
+  // 而且会把工具里「今天已做过」的状态写坏 —— 真正的那一天反而跑不到
+  // （今天 00:05 那轮把原神的秘境/合成台用掉了，22:07 那轮直接跳过）。
+  // 所以重置时刻之前一律不跑，等当天真正的排班。
+  const resetHour = Number(game.dailyResetHour ?? 4);
+  const nowHour = new Date().getHours();
+  if (nowHour < resetHour) {
+    const note = `还没到今天的日常周期（凌晨 ${resetHour}:00 重置），本轮不跑，等当天正常的排班。`;
+    log(stateDir, `skipped before reset: ${note}`);
+    notify({ stateDir, title: `${game.title} 日常：未执行`, body: note });
+    process.exit(0);
+  }
+
   const pluginState = readPluginState(stateDir);
   const guard = !pluginState.ui || pluginState.ui.foregroundGuard !== false;
   const gameState = pluginState.games && pluginState.games[args.game] ? pluginState.games[args.game] : {};
@@ -76,6 +92,19 @@ async function main() {
     process.exit(1);
   }
   log(stateDir, `headless spawned pid=${started.pid} runId=${started.runId}`);
+
+  // 幂等跳过：今天已经做过了（或缺口需要人工补），别弹「已完成」的假通知。
+  if (started.skipped) {
+    const skipReport = readReport(stateDir, args.game, started.runId) || {};
+    const gaps = (skipReport.steps || []).map((s) => s.detail || '').filter(Boolean).join('、');
+    notify({
+      stateDir,
+      title: `${game.title} 日常：已跳过`,
+      body: gaps ? `今天已经跑过，但还差：${gaps}` : '今天已经跑过，本次没有重复拉起游戏。',
+    });
+    log(stateDir, `skipped: ${skipReport.notes || ''}`);
+    process.exit(0);
+  }
 
   // 看门狗预算：比计划任务的执行时限少 5 分钟。到点由插件自己收尾（停 headless、
   // 写兜底报告），而不是等 Windows 把整个进程树杀掉——那样连报告都不会留下。
@@ -115,16 +144,46 @@ async function main() {
       }
     }
     log(stateDir, `watchdog: stopped after ${budgetMin}min, report written`);
+    notify({
+      stateDir,
+      title: `${game.title} 日常：超时`,
+      body: `超过 ${budgetMin} 分钟被看门狗中止，请看 automation/run-headless.log。`,
+    });
     process.exit(3);
   }
   const report = readReport(stateDir, args.game, started.runId);
   const reportFile = reportPathOf(stateDir, args.game, started.runId);
   if (!report) {
     log(stateDir, `no report at ${reportFile} (run dir ${runDirOf(stateDir, args.game, started.runId)})`);
+    // 没有报告 = 出了没预料到的问题，也得让人知道。
+    notify({
+      stateDir,
+      title: `${game.title} 日常：失败`,
+      body: '运行结束但没有产出报告，请查看 automation/run-headless.log。',
+    });
     process.exit(1);
   }
   log(stateDir, `report status=${report.status || 'unknown'} file=${reportFile}`);
-  process.exit(report.status === 'failed' ? 1 : 0);
+
+  // 通知不依赖 DSH 开着：计划任务跑完直接弹一条，
+  // 否则「人不在电脑前、DSH 没启动」的那天就完全没人知道结果。
+  const summary = dailySummary(stateDir, args.game, { resetHour: game.dailyResetHour });
+  const status = report.status || 'unknown';
+  const statusText = { success: '已完成', partial: '部分完成', failed: '失败', timeout: '超时' }[status] || status;
+  const doneText = summary.done.length ? `完成 ${summary.done.length} 项` : '';
+  const gapText = summary.gaps.length ? `，还差：${summary.gaps.join('、')}` : '';
+  notify({
+    stateDir,
+    title: `${game.title} 日常：${statusText}`,
+    body: `${doneText}${gapText}`,
+  });
+
+  // 退出码区分：0=成功、1=失败、2=部分完成、3=超时。
+  // 任务计划器里能一眼看出「今天只是没做完」，而不是和失败混在一起。
+  if (status === 'failed') process.exit(1);
+  if (status === 'partial') process.exit(2);
+  if (status === 'timeout') process.exit(3);
+  process.exit(0);
 }
 
 main().catch((error) => {

@@ -19,6 +19,7 @@ import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mj
 import { parseM7aLog, m7aReport, resolveM7a, ensurePowerPlan } from '../lib/m7a.mjs';
 import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
 import { businessDay, businessDayOfRunId, isPreviousCycle, DEFAULT_RESET_HOUR } from '../lib/dailycycle.mjs';
+import { mergeReport, readDaily, dailySummary, dailyDecision } from '../lib/daily-state.mjs';
 import { todayRunStatus, acquireRunLock } from '../lib/runner.mjs';
 import { zzzAppSnapshot, collectZzzAppRecords, appFingerprint } from '../lib/zzzrun.mjs';
 
@@ -119,6 +120,20 @@ check('bettergi log parse', () => {
   if (!/resin=40/.test(parsed.evidence.join(' '))) throw new Error(`树脂用量没统计：${parsed.evidence.join(' ')}`);
   const done = parseBettergiLog(log.replace('"未领取"', '"已领取"'), 0);
   if (done.status !== 'success') throw new Error(`全部完成应为 success，实际 ${done.status}`);
+  // 领到了每日奖励，那一步才是 ok
+  const reward = done.steps.find((s) => s.name === '每日奖励');
+  if (!reward || reward.ok !== true) throw new Error('已领取时每日奖励应记为完成');
+  // 没领到时不能记成完成（旧版会自相矛盾：步骤 ok:true + 备注说没领）
+  const notClaimed = parsed.steps.find((s) => s.name === '每日奖励');
+  if (!notClaimed || notClaimed.ok !== false) throw new Error('未领取时每日奖励应记为未完成');
+
+  // 秘境 0 轮 = 没刷（树脂不够或今天已跑过），不能打勾
+  const noResin = parseBettergiLog(
+    ['[INF] "自动秘境"，用尽所有浓缩树脂和原粹树脂后结束', '[INF] 一条龙和配置组任务结束'].join('\n'),
+    0,
+  );
+  const domain = noResin.steps.find((s) => s.name === '自动秘境');
+  if (!domain || domain.ok !== false) throw new Error(`秘境 0 轮应记为未完成：${JSON.stringify(noResin.steps)}`);
   return `partial=${parsed.status} success=${done.status} steps=${parsed.steps.length}`;
 });
 
@@ -287,6 +302,100 @@ check('运行互斥锁', () => {
     if (!fourth.ok) throw new Error(`过期锁应被接管：${JSON.stringify(fourth)}`);
     fourth.release();
     return '互斥 / 释放 / 过期锁接管 ok';
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-daily-'));
+  try {
+    // 第一轮：部分完成
+    mergeReport(
+      dir,
+      'sr',
+      {
+        runId: '20261031-100000',
+        status: 'partial',
+        startedAt: new Date(2026, 9, 31, 10, 0).toISOString(),
+        steps: [
+          { name: '登录游戏', ok: true, detail: '' },
+          { name: '累计消耗120点开拓力', ok: false, detail: '本次未完成' },
+        ],
+      },
+      {},
+      { resetHour: 4 },
+    );
+    const s1 = dailySummary(dir, 'sr', { resetHour: 4 });
+    if (s1.status !== 'partial') throw new Error(`状态应为 partial：${s1.status}`);
+    if (!s1.done.includes('登录游戏')) throw new Error('做好的没记上');
+    if (!s1.gaps.includes('累计消耗120点开拓力')) throw new Error('缺口没记上');
+    if (s1.complete) throw new Error('有缺口不应算完成');
+
+    // 允许补跑的游戏：有缺口 → 不跳过
+    const d1 = dailyDecision(dir, 'sr', { resetHour: 4, autoRetry: 2 });
+    if (d1.skip) throw new Error(`有缺口时不该跳过：${JSON.stringify(d1)}`);
+
+    // 第二轮：补齐 → success
+    mergeReport(
+      dir,
+      'sr',
+      {
+        runId: '20261031-110000',
+        status: 'success',
+        startedAt: new Date(2026, 9, 31, 11, 0).toISOString(),
+        steps: [
+          { name: '登录游戏', ok: true, detail: '' },
+          { name: '累计消耗120点开拓力', ok: true, detail: '已完成 +200分' },
+        ],
+      },
+      {},
+      { resetHour: 4 },
+    );
+    const s2 = dailySummary(dir, 'sr', { resetHour: 4 });
+    if (s2.status !== 'success') throw new Error(`补齐后应为 success：${s2.status}`);
+    if (s2.gaps.length) throw new Error(`补齐后不该还有缺口：${s2.gaps.join('、')}`);
+    if (!s2.complete) throw new Error('补齐后应算完成');
+    const d2 = dailyDecision(dir, 'sr', { resetHour: 4, autoRetry: 2 });
+    if (!d2.skip) throw new Error('完成之后应跳过');
+
+    // 不允许补跑的游戏（autoRetry=0）：有缺口也跳过，但要说清差什么
+    mergeReport(
+      dir,
+      'genshin',
+      {
+        runId: '20261031-120000',
+        status: 'partial',
+        startedAt: new Date(2026, 9, 31, 12, 0).toISOString(),
+        steps: [{ name: '每日奖励', ok: false, detail: '每日委托未完成' }],
+      },
+      {},
+      { resetHour: 4 },
+    );
+    const d3 = dailyDecision(dir, 'genshin', { resetHour: 4, autoRetry: 0 });
+    if (!d3.skip) throw new Error('autoRetry=0 时应跳过');
+    if (!d3.gaps.includes('每日奖励')) throw new Error('跳过时也要说清缺口');
+
+    // 历史报告按它自己的开始时间归档，不会算到今天。
+    // 注意：10-31 00:30 起的这一轮，业务日仍是 10-30（凌晨 4 点才重置）。
+    mergeReport(
+      dir,
+      'sr',
+      {
+        runId: '20261031-003000',
+        status: 'success',
+        startedAt: new Date(2026, 9, 31, 0, 30).toISOString(),
+        steps: [{ name: '跨天补跑的那一项', ok: true, detail: '' }],
+      },
+      {},
+      { resetHour: 4 },
+    );
+    const old = readDaily(dir, 'sr', '20261030', 4);
+    if (!old.done || !old.done['跨天补跑的那一项']) throw new Error('0:30 的那轮应归到 10-30');
+    const today = readDaily(dir, 'sr', '20261031', 4);
+    if (today.done['跨天补跑的那一项']) throw new Error('0:30 的那轮不该算进 10-31');
+    if (!today.done['登录游戏']) throw new Error('今天的清单丢了');
+    return `合并/缺口/补跑判定 ok（${s2.done.length} 项完成、${s2.gaps.length} 个缺口）`;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -20,6 +20,7 @@ import {
 } from './lib/tasks.mjs';
 import { startRun, stopRun, readRunner, isRunning } from './lib/runner.mjs';
 import { listRuns, readReport, metaPathOf, readJsonSafe } from './lib/report.mjs';
+import { dailySummary, mergeReport } from './lib/daily-state.mjs';
 import { buildInstallPrompt, buildReportPrompt } from './lib/prompt.mjs';
 import { openSession } from './lib/install.mjs';
 import { notify } from './lib/notify.mjs';
@@ -138,6 +139,8 @@ function tasksConfigGames(store, env) {
       mode: settings.mode === 'dry' ? 'dry' : 'real',
       schedule: settings.schedule,
       timeoutMin: settings.timeoutMin,
+      // 日常重置时刻：排班早于它没有意义（那一刻做的还是昨天的日常）。
+      resetHour: game.dailyResetHour,
     };
   });
 }
@@ -245,6 +248,7 @@ export function apply(ctx) {
           running: runner ? { running: runner.running, pid: runner.pid, runId: runner.runId, startedAt: runner.startedAt } : null,
           lastRunId: settings.lastRunId,
           lastStatus: settings.lastStatus,
+          daily: dailySummary(env.stateDir, game.id, { resetHour: game.dailyResetHour }),
           runs: runs[game.id] || [],
         };
       }),
@@ -261,9 +265,18 @@ export function apply(ctx) {
       const runs = listRuns(env.stateDir, game.id, { limit: 3 });
       for (const run of runs) {
         if (!run.hasReport || !run.summary) continue;
+        const meta = readJsonSafe(metaPathOf(env.stateDir, game.id, run.runId)) || {};
+        // 检查点补齐：DSH 关着的时候计划任务照样在跑，那些报告也要进当天的清单里。
+        try {
+          const report = readReport(env.stateDir, game.id, run.runId);
+          if (report) {
+            mergeReport(env.stateDir, game.id, report, meta, { resetHour: game.dailyResetHour });
+          }
+        } catch {
+          /* ignore */
+        }
         const known = (state.runs[game.id] || []).find((row) => row.runId === run.runId);
         if (known) continue;
-        const meta = readJsonSafe(metaPathOf(env.stateDir, game.id, run.runId)) || {};
         const summary = summarizeRun(run.runId, meta, { status: run.summary.status, mode: run.summary.mode });
         store.recordRun(game.id, { ...summary, mode: run.summary.mode || summary.mode });
         done.push({ game, run, summary });

@@ -17,6 +17,8 @@ import { spawn, execFileSync } from 'node:child_process';
 import { bettergiLogFile, bettergiReport } from '../lib/bettergi.mjs';
 
 const DONE_MARKER = '一条龙和配置组任务结束';
+// 配置组（调度组）跑完的标记：脚本自己的收尾日志，或 BetterGI 统一的收尾行。
+const GROUP_DONE_MARKERS = ['自动委托执行完毕', '一条龙和配置组任务结束'];
 
 function parseArgs(argv) {
   const out = {
@@ -26,6 +28,7 @@ function parseArgs(argv) {
     mode: 'real',
     runId: '',
     timeoutMin: 60,
+    groups: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -35,6 +38,13 @@ function parseArgs(argv) {
     else if (token === '--mode') out.mode = argv[++i];
     else if (token === '--run-id') out.runId = argv[++i];
     else if (token === '--timeout-min') out.timeoutMin = Number(argv[++i]) || 60;
+    // 前置配置组：例如「每日委托」——必须先做完委托，一条龙的「领取每日奖励」才领得到。
+    else if (token === '--groups') {
+      out.groups = String(argv[++i] || '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
   }
   return out;
 }
@@ -160,7 +170,43 @@ async function main() {
     await sleep(3000);
   }
 
-  // 2) 跑一条龙（冷启动会自己拉起游戏）
+  // 2) 前置配置组（例如「每日委托」）。
+  //    一条龙的「领取每日奖励」要求当天委托已完成，而 BetterGI 的一条龙**没有委托任务**，
+  //    所以顺序必须是：先跑委托配置组（JS 脚本做委托），再跑一条龙领奖励。
+  //    BetterGI 的命令行支持 `BetterGI.exe --startGroups <组名>`（官方源码 CommandLineOptions.cs）。
+  if (args.groups.length) {
+    const groupReader = createLogReader(args.root);
+    const groupLog = groupReader.read();
+    log(`先跑配置组：${args.groups.join('、')}`);
+    const groupChild = spawn(exe, ['--startGroups', ...args.groups], { cwd: args.root, stdio: ['ignore', 'pipe', 'pipe'] });
+    groupChild.stdout.on('data', (chunk) => process.stdout.write(chunk));
+    groupChild.stderr.on('data', (chunk) => process.stderr.write(chunk));
+    const groupBudget = Math.max(10, Number(args.timeoutMin) || 60) * 60 * 1000;
+    const groupDeadline = Date.now() + groupBudget;
+    let groupDone = false;
+    while (Date.now() < groupDeadline) {
+      await sleep(5000);
+      const text = groupReader.read();
+      if (GROUP_DONE_MARKERS.some((marker) => text.includes(marker))) {
+        groupDone = true;
+        log(`配置组完成：${args.groups.join('、')}`);
+        break;
+      }
+    }
+    if (!groupDone) {
+      log(`配置组 ${args.groups.join('、')} 在预算内没有出现收尾标记，继续跑一条龙（委托可能没做完）`);
+    }
+    // BetterGI 的单实例会让第二次命令行参数只做转发、不真正执行，
+    // 所以这里要结束 BetterGI（游戏留着不关），再起新的实例跑一条龙。
+    try {
+      killBettergi();
+    } catch {
+      /* ignore */
+    }
+    await sleep(3000);
+  }
+
+  // 3) 跑一条龙（冷启动会自己拉起游戏）
   const reader = createLogReader(args.root);
   log(`开始一条龙：startOneDragon ${args.config}（BetterGI 会自行拉起游戏）`);
   const child = spawn(exe, ['startOneDragon', args.config], { cwd: args.root, stdio: ['ignore', 'pipe', 'pipe'] });

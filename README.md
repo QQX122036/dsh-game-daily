@@ -135,8 +135,30 @@ Agent 会自己完成 clone、`install_bundle`、确认插件已激活，并按�
   （PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会带），
   否则读取端 `JSON.parse` 直接抛错 —— 面板上「注册成功/失败/哪条任务报错」全部不可见。
 
-## 报告与通知
+## 原神的每日委托（社区脚本 + 一条龙前置组）
 
+BetterGI **官方没有**「每日委托」任务：源码里 `ViewModel/Pages/OneDragon/DailyCommissionViewModel.cs`
+只是个空壳（只有 `Title`），DI 注册在 `App.xaml.cs` 里被注释掉；一条龙的任务列表里也没有它。
+
+能做，但要用**社区脚本**（官方脚本仓库 `babalae/bettergi-scripts-list` 的 `js/` 分区）：
+
+| 脚本 | 版本 | 做什么 | 覆盖地区 |
+| --- | --- | --- | --- |
+| `AutoCommissionNova` | 1.0.4 | 真的自动做委托（战斗 + 对话 + 成就） | 挪德卡莱稳定；蒙德可用但不稳；其他地区只收录了部分锄地类 |
+| `AutoCommission` | 0.98.18 | 同上，蒙德全家桶（含隐藏成就） | 蒙德为主（独立仓库 `LX666-666/AutoCommission`） |
+| `使用历练点完成每日委托` | 2.3.1 | **不自动做委托**：花 120 体力换历练点，在冒险家协会一键完成并领奖 | 全地区 |
+
+接线方式（插件侧已经实现）：
+
+1. BetterGI 的命令行支持 `BetterGI.exe --startGroups <组名>`（官方源码 `Helpers/CommandLineOptions.cs`），
+   所以原神的每日流程可以是「**先跑「每日委托」配置组 → 再跑一条龙**」——
+   一条龙的「领取每日奖励」要求当天委托已完成，顺序反了就永远领不到 90 原石。
+2. 插件参数：`state.games.genshin.oneDragonGroups = "每日委托"`（或环境变量 `DSH_GAME_DAILY_BETTERGI_GROUPS`）。
+   **默认是空的**：脚本第一次跑会弹配置面板（要填战斗队伍名、元素采集队伍名、战斗策略），
+   没配好就自动跑会卡在面板上。
+3. 脚本的账号配置落在 `User\JsScript\AutoCommissionNova\Data\user-config\`。
+
+## 报告与通知
 - 计划任务跑完会**直接弹一条 Windows 通知**，不依赖 DSH 开着 ——
   否则「人不在电脑前、DSH 没启动」的那天就完全没人知道结果。
 - 通知只会有一条：跑完的报告里带 `notifiedAt`，DSH 侧的 reconcile 见到就不再重复弹，

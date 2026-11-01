@@ -1,0 +1,28 @@
+{
+  "script": "AutoCommissionNova",
+  "note": "脚本自带流程只有蒙德(NPC)/须弥(Basic)；账号在至冬·古兽冰原，委托能识别却执行不了。这些流程按脚本 OCR 出来的委托坐标补录，脚本更新后由插件自动补回。collect=true 的是采集委托（图标是「0/1」），流程用「在附近交互」采集，不能带「自动战斗」——采集点没有敌人，BetterGI 的自动战斗会一直等下去。",
+  "battleStrategy": "万能战斗策略（萌新推荐）",
+  "flows": [
+    {
+      "name": "邪恶的扩张",
+      "country": "至冬",
+      "location": "古兽冰原",
+      "collect": false,
+      "points": [[7575, 7768]]
+    },
+    {
+      "name": "为雪不净",
+      "country": "至冬",
+      "location": "古兽冰原",
+      "collect": true,
+      "points": [[7173, 7866], [7127, 7996]]
+    },
+    {
+      "name": "霜冰收藏家",
+      "country": "至冬",
+      "location": "古兽冰原",
+      "collect": true,
+      "points": [[7942, 8015]]
+    }
+  ]
+}

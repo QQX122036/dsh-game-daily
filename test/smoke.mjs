@@ -20,6 +20,7 @@ import { parseM7aLog, m7aReport, resolveM7a, ensurePowerPlan } from '../lib/m7a.
 import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
 import { businessDay, businessDayOfRunId, isPreviousCycle, DEFAULT_RESET_HOUR } from '../lib/dailycycle.mjs';
 import { mergeReport, readDaily, dailySummary, dailyDecision } from '../lib/daily-state.mjs';
+import { ensureCommissionFlows } from '../lib/bettergi-commission.mjs';
 import { todayRunStatus, acquireRunLock } from '../lib/runner.mjs';
 import { zzzAppSnapshot, collectZzzAppRecords, appFingerprint } from '../lib/zzzrun.mjs';
 
@@ -326,14 +327,14 @@ check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
       {},
       { resetHour: 4 },
     );
-    const s1 = dailySummary(dir, 'sr', { resetHour: 4 });
+    const s1 = dailySummary(dir, 'sr', { resetHour: 4, key: '20261031' });
     if (s1.status !== 'partial') throw new Error(`状态应为 partial：${s1.status}`);
     if (!s1.done.includes('登录游戏')) throw new Error('做好的没记上');
     if (!s1.gaps.includes('累计消耗120点开拓力')) throw new Error('缺口没记上');
     if (s1.complete) throw new Error('有缺口不应算完成');
 
     // 允许补跑的游戏：有缺口 → 不跳过
-    const d1 = dailyDecision(dir, 'sr', { resetHour: 4, autoRetry: 2 });
+    const d1 = dailyDecision(dir, 'sr', { resetHour: 4, autoRetry: 2, key: '20261031' });
     if (d1.skip) throw new Error(`有缺口时不该跳过：${JSON.stringify(d1)}`);
 
     // 第二轮：补齐 → success
@@ -352,11 +353,11 @@ check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
       {},
       { resetHour: 4 },
     );
-    const s2 = dailySummary(dir, 'sr', { resetHour: 4 });
+    const s2 = dailySummary(dir, 'sr', { resetHour: 4, key: '20261031' });
     if (s2.status !== 'success') throw new Error(`补齐后应为 success：${s2.status}`);
     if (s2.gaps.length) throw new Error(`补齐后不该还有缺口：${s2.gaps.join('、')}`);
     if (!s2.complete) throw new Error('补齐后应算完成');
-    const d2 = dailyDecision(dir, 'sr', { resetHour: 4, autoRetry: 2 });
+    const d2 = dailyDecision(dir, 'sr', { resetHour: 4, autoRetry: 2, key: '20261031' });
     if (!d2.skip) throw new Error('完成之后应跳过');
 
     // 不允许补跑的游戏（autoRetry=0）：有缺口也跳过，但要说清差什么
@@ -372,7 +373,7 @@ check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
       {},
       { resetHour: 4 },
     );
-    const d3 = dailyDecision(dir, 'genshin', { resetHour: 4, autoRetry: 0 });
+    const d3 = dailyDecision(dir, 'genshin', { resetHour: 4, autoRetry: 0, key: '20261031' });
     if (!d3.skip) throw new Error('autoRetry=0 时应跳过');
     if (!d3.gaps.includes('每日奖励')) throw new Error('跳过时也要说清缺口');
 
@@ -398,6 +399,41 @@ check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
     return `合并/缺口/补跑判定 ok（${s2.done.length} 项完成、${s2.gaps.length} 个缺口）`;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('委托流程自愈', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-comm-'));
+  try {
+    const scriptDir = path.join(root, 'User', 'JsScript', 'AutoCommissionNova');
+    fs.mkdirSync(path.join(scriptDir, 'config'), { recursive: true });
+    fs.mkdirSync(path.join(scriptDir, 'Data', 'user-config'), { recursive: true });
+    fs.writeFileSync(
+      path.join(scriptDir, 'config', 'commission-catalog.json'),
+      JSON.stringify({ basic: ['邪恶的扩张'], npc: [], unsupported: [] }),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(scriptDir, 'Data', 'user-config', '257106739.json'),
+      JSON.stringify({ uid: '257106739', settings: { skipSafeTeleport: false, party: { global: {}, scopes: {} } } }),
+      'utf8',
+    );
+    const first = ensureCommissionFlows(root, path.resolve('.'));
+    if (!first.ok) throw new Error(`补录失败：${JSON.stringify(first)}`);
+    if (first.accounts !== 1) throw new Error(`账号配置没找到：${JSON.stringify(first)}`);
+    const flowDir = path.join(scriptDir, 'process', '至冬', 'Basic', '邪恶的扩张', '古兽冰原-1');
+    if (!fs.existsSync(path.join(flowDir, 'process.json'))) throw new Error('流程文件没写出来');
+    if (!fs.existsSync(path.join(flowDir, '_path.json'))) throw new Error('路径文件没写出来');
+    const steps = JSON.parse(fs.readFileSync(path.join(flowDir, 'process.json'), 'utf8'));
+    if (!Array.isArray(steps) || steps[0].type !== '地图追踪') throw new Error('流程步骤不对');
+    const catalog = JSON.parse(fs.readFileSync(path.join(scriptDir, 'config', 'commission-catalog.json'), 'utf8'));
+    if (!catalog.basic.includes('为雪不净')) throw new Error('白名单没补上');
+    const account = JSON.parse(fs.readFileSync(path.join(scriptDir, 'Data', 'user-config', '257106739.json'), 'utf8'));
+    if (account.settings.skipSafeTeleport !== true) throw new Error('skipSafeTeleport 没打开');
+    if (!account.settings.party.global.battleStrategy) throw new Error('战斗策略没写');
+    return `流程/白名单/账号配置补齐 ok（${first.flows} 个委托，${first.accounts} 个账号）`;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

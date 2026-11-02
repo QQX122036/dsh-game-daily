@@ -156,7 +156,29 @@ BetterGI **官方没有**「每日委托」任务：源码里 `ViewModel/Pages/O
 2. 插件参数：`state.games.genshin.oneDragonGroups = "每日委托"`（或环境变量 `DSH_GAME_DAILY_BETTERGI_GROUPS`）。
    **默认是空的**：脚本第一次跑会弹配置面板（要填战斗队伍名、元素采集队伍名、战斗策略），
    没配好就自动跑会卡在面板上。
+   - 直接改 `state.json` 不可靠：DSH 内存里那份 state 会在下次写入时把它整份覆盖掉，
+     所以走接口 `POST /api/game-daily/apply`（`games.genshin.oneDragonGroups`）才留得住。
+   - 就算它是空的也不会漏：跑之前会在 `User\ScriptGroup\` 里找名字带「委托」的组（默认「每日委托」），
+     找到就用（`lib/runner.mjs` 的 `detectCommissionGroups`）。
 3. 脚本的账号配置落在 `User\JsScript\AutoCommissionNova\Data\user-config\`。
+
+### 委托每天轮换 → 配置组要跑两遍（自愈）
+
+脚本的流程查找是「按委托坐标匹配最近的流程目录」（`basic-process-matcher.js`），
+今天的委托没有对应流程目录时，它只能报「未找到委托 X 在 Y 的子目录」然后跳过。
+
+但它在**识别阶段**就会把当天的委托（名称 / 地区 / 地点 / 坐标）写进账号配置，
+所以插件的顺序是：
+
+1. 跑一遍「每日委托」配置组 → 脚本识别今天的委托并落盘；
+2. `ensureCommissionFlows()` 用这份坐标**补出流程**；
+3. 日志里出现过「未找到委托」就**再跑一遍**配置组，这次委托做得完。
+
+第二遍之后还会再自愈一次 —— 补出来的流程留着给明天用，
+省得明天的排班又卡在「未找到流程」上（`automation/run-bettergi.mjs`）。
+
+配置组阶段的预算单独封顶 45 分钟：委托做不完也不能把整轮时间耗光，
+后面还有一条龙（领每日奖励要靠它）。
 
 ### 委托是轮换的 → 流程要自动生成
 

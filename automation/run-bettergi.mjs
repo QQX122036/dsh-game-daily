@@ -14,7 +14,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { bettergiLogFile, bettergiReport } from '../lib/bettergi.mjs';
+import { ensureCommissionFlows } from '../lib/bettergi-commission.mjs';
+
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const DONE_MARKER = '一条龙和配置组任务结束';
 // 配置组（调度组）跑完的标记：脚本自己的收尾日志，或 BetterGI 统一的收尾行。
@@ -174,36 +178,79 @@ async function main() {
   //    一条龙的「领取每日奖励」要求当天委托已完成，而 BetterGI 的一条龙**没有委托任务**，
   //    所以顺序必须是：先跑委托配置组（JS 脚本做委托），再跑一条龙领奖励。
   //    BetterGI 的命令行支持 `BetterGI.exe --startGroups <组名>`（官方源码 CommandLineOptions.cs）。
-  if (args.groups.length) {
+  //
+  //    跑两遍的情况：委托是每天轮换的，脚本第一天只会把「今天的委托」记进账号配置，
+  //    流程文件是跑之前补的 —— 所以第一遍会报「未找到委托 X 在 Y 的流程」。
+  //    这时补出流程再跑一遍就能把委托做完（第一遍至少把名字/地点/坐标记下来了）。
+  const groupBudgetMin = Math.min(Math.max(10, Number(args.timeoutMin) || 60), 45);
+  let groupText = '';
+  const runGroups = async (budgetMin) => {
     const groupReader = createLogReader(args.root);
-    const groupLog = groupReader.read();
-    log(`先跑配置组：${args.groups.join('、')}`);
-    const groupChild = spawn(exe, ['--startGroups', ...args.groups], { cwd: args.root, stdio: ['ignore', 'pipe', 'pipe'] });
+    groupReader.read();
+    const groupChild = spawn(exe, ['--startGroups', ...args.groups], {
+      cwd: args.root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     groupChild.stdout.on('data', (chunk) => process.stdout.write(chunk));
     groupChild.stderr.on('data', (chunk) => process.stderr.write(chunk));
-    const groupBudget = Math.max(10, Number(args.timeoutMin) || 60) * 60 * 1000;
-    const groupDeadline = Date.now() + groupBudget;
-    let groupDone = false;
-    while (Date.now() < groupDeadline) {
+    const deadline = Date.now() + budgetMin * 60 * 1000;
+    let done = false;
+    let text = '';
+    while (Date.now() < deadline) {
       await sleep(5000);
-      const text = groupReader.read();
+      text += groupReader.read();
       if (GROUP_DONE_MARKERS.some((marker) => text.includes(marker))) {
-        groupDone = true;
-        log(`配置组完成：${args.groups.join('、')}`);
+        done = true;
         break;
       }
     }
-    if (!groupDone) {
-      log(`配置组 ${args.groups.join('、')} 在预算内没有出现收尾标记，继续跑一条龙（委托可能没做完）`);
-    }
+    groupText = text;
     // BetterGI 的单实例会让第二次命令行参数只做转发、不真正执行，
-    // 所以这里要结束 BetterGI（游戏留着不关），再起新的实例跑一条龙。
+    // 所以这里要结束 BetterGI（游戏留着不关），再起新的实例。
     try {
       killBettergi();
     } catch {
       /* ignore */
     }
     await sleep(3000);
+    return done;
+  };
+
+  if (args.groups.length) {
+    log(`先跑配置组：${args.groups.join('、')}`);
+    const groupDone = await runGroups(groupBudgetMin);
+    if (groupDone) log(`配置组完成：${args.groups.join('、')}`);
+    else log(`配置组 ${args.groups.join('、')} 在预算内没有出现收尾标记，继续跑一条龙（委托可能没做完）`);
+
+    // 趁脚本刚识别完委托，把流程补出来：
+    //   ① 今天的委托缺流程 → 补完再跑一遍（今天就能做完）
+    //   ② 今天的委托做完了 → 这些流程留着给明天用（省得明天又卡一次）
+    const heal = () => {
+      try {
+        const flows = ensureCommissionFlows(args.root, PLUGIN_ROOT);
+        log(
+          `委托流程自愈：${JSON.stringify({
+            ok: flows.ok,
+            flows: flows.flows,
+            discovered: flows.discovered,
+            changed: (flows.changed || []).length,
+            error: flows.error || '',
+          })}`,
+        );
+        return flows;
+      } catch (error) {
+        log(`委托流程自愈失败：${String((error && error.message) || error)}`);
+        return { ok: false };
+      }
+    };
+    const flows = heal();
+    const missingFlow = /未找到委托/.test(groupText);
+    if (missingFlow && flows.ok && (flows.discovered || 0) > 0) {
+      log('检测到委托缺流程（今天的委托是轮换的），补录后重跑一次配置组');
+      const again = await runGroups(Math.min(groupBudgetMin, 30));
+      log(again ? '重跑完成' : '重跑仍未出现收尾标记');
+      heal();
+    }
   }
 
   // 3) 跑一条龙（冷启动会自己拉起游戏）

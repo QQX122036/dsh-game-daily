@@ -121,6 +121,9 @@ function sanitizeGamesPatch(raw) {
     }
     if (src.timeoutMin !== undefined) patch.timeoutMin = clampTimeout(src.timeoutMin, 90);
     if (typeof src.gamePath === 'string') patch.gamePath = src.gamePath.slice(0, 400);
+    // 一条龙之前先跑的配置组（逗号分隔）。它必须走接口落到内存里的那份 state，
+    // 直接改 state.json 的话会被 DSH 用内存副本整份覆盖掉。
+    if (typeof src.oneDragonGroups === 'string') patch.oneDragonGroups = src.oneDragonGroups.slice(0, 200);
     if (Object.keys(patch).length) out[gameId] = patch;
   }
   return out;
@@ -434,6 +437,7 @@ export function apply(ctx) {
           if (values.schedule) target.schedule = { ...target.schedule, ...values.schedule };
           if (values.timeoutMin !== undefined) target.timeoutMin = values.timeoutMin;
           if (values.gamePath !== undefined) target.gamePath = values.gamePath;
+          if (values.oneDragonGroups !== undefined) target.oneDragonGroups = values.oneDragonGroups;
           target.taskName = taskNameFor(env.taskPrefix, gameId);
         }
       });

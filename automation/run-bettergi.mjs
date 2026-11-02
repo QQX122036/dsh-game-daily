@@ -16,7 +16,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bettergiLogFile, bettergiReport } from '../lib/bettergi.mjs';
-import { ensureCommissionFlows } from '../lib/bettergi-commission.mjs';
+import { ensureCommissionFlows, parseCommissionTypes } from '../lib/bettergi-commission.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -227,12 +227,17 @@ async function main() {
     //   ② 今天的委托做完了 → 这些流程留着给明天用（省得明天又卡一次）
     const heal = () => {
       try {
-        const flows = ensureCommissionFlows(args.root, PLUGIN_ROOT);
+        // 从刚才这遍的日志里认出每个委托是战斗还是采集 —— 委托每天轮换，
+        // 类型只能从游戏自己的委托描述里看（「击败所有敌人0/3」= 战斗，
+        // 「收集所有[冰]元素微粒0/1」= 采集），硬编码必然对不上。
+        const types = parseCommissionTypes(groupText);
+        const flows = ensureCommissionFlows(args.root, PLUGIN_ROOT, { types });
         log(
           `委托流程自愈：${JSON.stringify({
             ok: flows.ok,
             flows: flows.flows,
             discovered: flows.discovered,
+            types,
             changed: (flows.changed || []).length,
             error: flows.error || '',
           })}`,
@@ -244,8 +249,12 @@ async function main() {
       }
     };
     const flows = heal();
-    const missingFlow = /未找到委托/.test(groupText);
-    if (missingFlow && flows.ok && (flows.discovered || 0) > 0) {
+    // 重跑的条件：委托没做完就别放弃。
+    //   · 「未找到委托」  → 今天的委托还没有流程（第一遍只是把名字/坐标记下来了）
+    //   · 「执行后检查未完成」→ 流程跑了但委托没达成（常见于流程坐标是昨天的旧坐标）
+    // 两种情况都能靠「补流程 + 再跑一遍」解决。
+    const needRetry = /未找到委托|执行后检查未完成|仍未完成，跳过该委托|委托执行失败/.test(groupText);
+    if (needRetry && flows.ok) {
       log('检测到委托缺流程（今天的委托是轮换的），补录后重跑一次配置组');
       const again = await runGroups(Math.min(groupBudgetMin, 30));
       log(again ? '重跑完成' : '重跑仍未出现收尾标记');

@@ -425,7 +425,17 @@ check('委托流程自愈', () => {
     if (!fs.existsSync(path.join(flowDir, 'process.json'))) throw new Error('流程文件没写出来');
     if (!fs.existsSync(path.join(flowDir, '_path.json'))) throw new Error('路径文件没写出来');
     const steps = JSON.parse(fs.readFileSync(path.join(flowDir, 'process.json'), 'utf8'));
-    if (!Array.isArray(steps) || steps[0].type !== '地图追踪') throw new Error('流程步骤不对');
+    if (!Array.isArray(steps) || steps[0].type !== '自动任务') throw new Error('流程第一步应是自动任务(AutoPick)');
+    if (!steps.some((s) => s.type === '地图追踪')) throw new Error('流程里没有地图追踪');
+    const interact = steps.find((s) => s.type === '在附近交互');
+    if (!interact) throw new Error('流程里没有「在附近交互」');
+    // 委托描述是「收集所有[冰]元素微粒」，用「采集」匹配不上 → 整步会被跳过
+    if (interact.desc !== '收集') throw new Error(`在附近交互的 desc 应为「收集」，实际 ${interact.desc}`);
+    const pathJson = JSON.parse(fs.readFileSync(path.join(flowDir, '_path.json'), 'utf8'));
+    // 至冬没有四叶印，带 up_down_grab_leaf 就是死循环
+    if (JSON.stringify(pathJson).includes('up_down_grab_leaf')) throw new Error('路径里不能出现 up_down_grab_leaf');
+    // 传送之后的第一个路点不能带动作，否则会卡在「找不到四叶印」
+    if (pathJson.positions[1] && pathJson.positions[1].action) throw new Error('传送后第一个路点不该带动作');
     const catalog = JSON.parse(fs.readFileSync(path.join(scriptDir, 'config', 'commission-catalog.json'), 'utf8'));
     if (!catalog.basic.includes('为雪不净')) throw new Error('白名单没补上');
     const account = JSON.parse(fs.readFileSync(path.join(scriptDir, 'Data', 'user-config', '257106739.json'), 'utf8'));

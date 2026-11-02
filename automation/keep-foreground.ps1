@@ -83,6 +83,13 @@ public class BgiFgWin
     [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
+    // 阻止屏保/息屏/休眠：ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);
+    public const uint ES_CONTINUOUS = 0x80000000;
+    public const uint ES_SYSTEM_REQUIRED = 0x00000001;
+    public const uint ES_DISPLAY_REQUIRED = 0x00000002;
+    public static uint KeepAwake() { return SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED); }
+    public static uint ReleaseAwake() { return SetThreadExecutionState(ES_CONTINUOUS); }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
@@ -261,6 +268,11 @@ $aLast = $null
 $lastGameSeen = Get-Date
 $lastRestore = [datetime]::MinValue
 $cooldownSeconds = 4
+# 阻止屏保/息屏/休眠：
+# 屏保一弹出来就把前台抢走（ScreenSaverPlayer），BetterGI 立刻「不是原神，暂停」；
+# 更糟的是锁屏会让游戏直接退出（实测 2026-11-02 20:26、20:43 两次原神消失）。
+# SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED) 就是干这个的。
+try { [void][BgiFgWin]::KeepAwake(); Write-FgLog '已阻止屏保/息屏/休眠（SetThreadExecutionState）' } catch { Write-FgLog ("阻止屏保失败：{0}" -f $_.Exception.Message) }
 while ($true) {
     if (Test-Path -LiteralPath $StopFile) { Write-FgLog "检测到停止文件，退出"; break }
     if ((Get-Date) -gt $deadline) { Write-FgLog ("到达 -MaxMinutes {0} 分钟，退出" -f $MaxMinutes); break }
@@ -297,4 +309,5 @@ while ($true) {
 }
 
 Write-FgLog ("=== 前台守护结束：共拉回 {0} 次，运行 {1:N1} 分钟 ===" -f $restores, ((Get-Date) - $started).TotalMinutes)
+try { [void][BgiFgWin]::ReleaseAwake() } catch { }
 exit 0

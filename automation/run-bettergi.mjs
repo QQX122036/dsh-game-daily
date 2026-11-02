@@ -16,7 +16,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { bettergiLogFile, bettergiReport } from '../lib/bettergi.mjs';
-import { ensureCommissionFlows, parseCommissionTypes } from '../lib/bettergi-commission.mjs';
+import { ensureCommissionFlows, parseCommissionTypes, loadCommissionTypes, saveCommissionTypes } from '../lib/bettergi-commission.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -42,6 +42,7 @@ function parseArgs(argv) {
     else if (token === '--mode') out.mode = argv[++i];
     else if (token === '--run-id') out.runId = argv[++i];
     else if (token === '--timeout-min') out.timeoutMin = Number(argv[++i]) || 60;
+    else if (token === '--state-dir') out.stateDir = String(argv[++i] || '');
     // 前置配置组：例如「每日委托」——必须先做完委托，一条龙的「领取每日奖励」才领得到。
     else if (token === '--groups') {
       out.groups = String(argv[++i] || '')
@@ -246,7 +247,11 @@ async function main() {
         // 从刚才这遍的日志里认出每个委托是战斗还是采集 —— 委托每天轮换，
         // 类型只能从游戏自己的委托描述里看（「击败所有敌人0/3」= 战斗，
         // 「收集所有[冰]元素微粒0/1」= 采集），硬编码必然对不上。
-        const types = parseCommissionTypes(groupText);
+        // 认过一次就记住（同名委托的类型是固定的），第二天直接用对的流程。
+        const learned = parseCommissionTypes(groupText);
+        const types = args.stateDir
+          ? saveCommissionTypes(args.stateDir, learned)
+          : { ...loadCommissionTypes(''), ...learned };
         const flows = ensureCommissionFlows(args.root, PLUGIN_ROOT, { types });
         log(
           `委托流程自愈：${JSON.stringify({

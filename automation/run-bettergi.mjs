@@ -193,14 +193,30 @@ async function main() {
     });
     groupChild.stdout.on('data', (chunk) => process.stdout.write(chunk));
     groupChild.stderr.on('data', (chunk) => process.stderr.write(chunk));
+    let childExited = false;
+    groupChild.on('exit', () => {
+      childExited = true;
+    });
     const deadline = Date.now() + budgetMin * 60 * 1000;
     let done = false;
     let text = '';
+    let lastGrow = Date.now();
     while (Date.now() < deadline) {
       await sleep(5000);
-      text += groupReader.read();
+      const chunk = groupReader.read();
+      if (chunk) {
+        text += chunk;
+        lastGrow = Date.now();
+      }
       if (GROUP_DONE_MARKERS.some((marker) => text.includes(marker))) {
         done = true;
+        break;
+      }
+      // 进程已经退出、日志也不再增长 → 没有活着的实例在跑（崩溃/被掐掉/游戏退出）。
+      // 再等下去就是白烧预算：BetterGI 的单实例会把命令行参数转发给老实例就退出，
+      // 所以给 3 分钟的宽限，让新实例把日志写出来。
+      if (childExited && Date.now() - lastGrow > 3 * 60 * 1000) {
+        log('配置组进程已退出且日志不再增长（没有实例在跑），提前结束这一遍');
         break;
       }
     }

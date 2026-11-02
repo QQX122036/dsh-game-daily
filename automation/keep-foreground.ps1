@@ -177,9 +177,11 @@ public class BgiFgWin
         SetForegroundWindow(h);
         if (Foreground() == h) return true;
 
-        // ③ 最后手段
-        SwitchToThisWindow(h, true);
-        return Foreground() == h;
+        // ③ 故意**不**用 SwitchToThisWindow：
+        //    它是 Win9x 时代的「强行切前台」，会把 DWM/GPU 的窗口合成状态搅乱 ——
+        //    实测原神在这个守护下反复被强拉前台后直接退出（2026-11-02 20:26、20:43 两次）。
+        //    拉不回来就下个周期再试，比把游戏搞崩划算。
+        return false;
     }
 }
 '@
@@ -257,6 +259,8 @@ if ($Once) {
 
 $aLast = $null
 $lastGameSeen = Get-Date
+$lastRestore = [datetime]::MinValue
+$cooldownSeconds = 4
 while ($true) {
     if (Test-Path -LiteralPath $StopFile) { Write-FgLog "检测到停止文件，退出"; break }
     if ((Get-Date) -gt $deadline) { Write-FgLog ("到达 -MaxMinutes {0} 分钟，退出" -f $MaxMinutes); break }
@@ -273,13 +277,18 @@ while ($true) {
         $lastGameSeen = Get-Date
         if (-not (Test-GameForeground $w)) {
             $fg = Get-ForegroundInfo
-            $sig = ('{0}|{1}' -f $fg.Pid, $fg.Title)
-            $ok = [BgiFgWin]::Restore($w.Hwnd)
-            if ($ok) {
-                $restores++
-                Write-FgLog ("↪ 拉回原神（抢前者：{0} / pid {1} / 标题「{2}」）第 {3} 次" -f $fg.Name, $fg.Pid, $fg.Title, $restores)
-            } else {
-                Write-FgLog ("⚠ 拉回失败（抢前者：{0} / pid {1} / 标题「{2}」）" -f $fg.Name, $fg.Pid, $fg.Title)
+            # 冷却：被抢前台时别每秒都去拉（反复激活会把游戏的窗口合成状态搞坏，
+            # 实测原神被连续强拉前台后会直接退出）。
+            if (((Get-Date) - $lastRestore).TotalSeconds -ge $cooldownSeconds) {
+                $lastRestore = Get-Date
+                $sig = ('{0}|{1}' -f $fg.Pid, $fg.Title)
+                $ok = [BgiFgWin]::Restore($w.Hwnd)
+                if ($ok) {
+                    $restores++
+                    Write-FgLog ("↪ 拉回原神（抢前者：{0} / pid {1} / 标题「{2}」）第 {3} 次" -f $fg.Name, $fg.Pid, $fg.Title, $restores)
+                } else {
+                    Write-FgLog ("⚠ 拉回失败（抢前者：{0} / pid {1} / 标题「{2}」）" -f $fg.Name, $fg.Pid, $fg.Title)
+                }
             }
         }
     }

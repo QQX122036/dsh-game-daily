@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)][string]$StateDir,
   [switch]$DryRun,
   [switch]$Remove,

@@ -20,7 +20,7 @@ import {
 } from './lib/tasks.mjs';
 import { startRun, stopRun, readRunner, isRunning } from './lib/runner.mjs';
 import { listRuns, readReport, metaPathOf, readJsonSafe } from './lib/report.mjs';
-import { dailySummary, mergeReport } from './lib/daily-state.mjs';
+import { dailySummary, dailyNotifiedStatus, markDailyNotified, mergeReport } from './lib/daily-state.mjs';
 import { buildInstallPrompt, buildReportPrompt } from './lib/prompt.mjs';
 import { openSession } from './lib/install.mjs';
 import { notify } from './lib/notify.mjs';
@@ -339,16 +339,25 @@ export function apply(ctx) {
       const alreadyNotified = Boolean(report.notifiedAt) || (meta && meta.notifiedAt);
       let notified = alreadyNotified;
       if (!alreadyNotified) {
-        try {
-          const result = notify({
-            stateDir: env.stateDir,
-            title: `${game.title} 日常：${statusText}`,
-            body: report.notes || `runId ${run.runId} · 详见设置页「游戏日常」`,
-          });
-          // notify 失败不算已送达：保持 delivered=false，下一轮 reconcile 会再试一次。
-          notified = Boolean(result && result.ok);
-        } catch {
-          /* 通知失败不影响记账 */
+        // 一天一个游戏只响一次：补跑/重试会连着跑好几轮，
+        // 每轮都弹一次 toast 会把人吵到，而且前面的 partial 会盖掉最后的 success。
+        const known = dailyNotifiedStatus(env.stateDir, game.id, { resetHour: game.dailyResetHour });
+        const current = report.status || 'unknown';
+        if (known && !isBetterStatus(current, known)) {
+          notified = true; // 已经通知过更好的状态了，这次不用再响
+        } else {
+          try {
+            const result = notify({
+              stateDir: env.stateDir,
+              title: `${game.title} 日常：${statusText}`,
+              body: report.notes || `runId ${run.runId} · 详见设置页「游戏日常」`,
+            });
+            // notify 失败不算已送达：保持 delivered=false，下一轮 reconcile 会再试一次。
+            notified = Boolean(result && result.ok);
+            if (notified) markDailyNotified(env.stateDir, game.id, current, { resetHour: game.dailyResetHour });
+          } catch {
+            /* 通知失败不影响记账 */
+          }
         }
       }
       if (!alreadyNotified && store.get().ui.reportSessions !== false) {
@@ -397,6 +406,16 @@ export function apply(ctx) {
         unknown: '状态未知',
       }[status] || '状态未知'
     );
+  }
+
+  // 状态好坏排序：success > partial > failed > timeout > unknown
+  const STATUS_RANK = { success: 4, partial: 3, failed: 2, timeout: 1, aborted: 1, unknown: 0 };
+  function statusRank(status) {
+    return STATUS_RANK[String(status || 'unknown')] ?? 0;
+  }
+  /** 新状态是不是比已经通知过的状态更好（更好才值得再响一次）。 */
+  function isBetterStatus(current, known) {
+    return statusRank(current) > statusRank(known);
   }
 
   const routes = {

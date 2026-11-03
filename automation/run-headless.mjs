@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { startRun, readRunner, isRunning, stopRun } from '../lib/runner.mjs';
 import { readReport, reportPathOf, runDirOf, readJsonSafe, writeJson, newRunId } from '../lib/report.mjs';
-import { dailySummary } from '../lib/daily-state.mjs';
+import { dailySummary, dailyNotifiedStatus, markDailyNotified } from '../lib/daily-state.mjs';
 import { notify } from '../lib/notify.mjs';
 import { gameById } from '../lib/games.mjs';
 
@@ -259,11 +259,20 @@ async function main() {
   const statusText = { success: '已完成', partial: '部分完成', failed: '失败', timeout: '超时' }[status] || status;
   const doneText = summary.done.length ? `完成 ${summary.done.length} 项` : '';
   const gapText = summary.gaps.length ? `，还差：${summary.gaps.join('、')}` : '';
-  const notified = notify({
-    stateDir,
-    title: `${game.title} 日常：${statusText}`,
-    body: `${doneText}${gapText}`,
-  });
+  // 一天一个游戏只响一次（状态没变就不重复弹）：
+  // 补跑/重试会连着跑好几轮，每轮都弹会把人吵到。
+  const alreadyNotified = dailyNotifiedStatus(stateDir, args.game, { resetHour: game.dailyResetHour });
+  const notified =
+    alreadyNotified === status
+      ? { ok: true, skipped: true }
+      : notify({
+          stateDir,
+          title: `${game.title} 日常：${statusText}`,
+          body: `${doneText}${gapText}`,
+        });
+  if (notified && notified.ok) {
+    markDailyNotified(stateDir, args.game, status, { resetHour: game.dailyResetHour });
+  }
   // 记下「已经通知过」：DSH 开着时它的 reconcile 也会想通知这一轮，
   // 没有这个标记就会每轮弹两次 toast、开两个汇报会话（每个都烧一次模型）。
   try {

@@ -188,8 +188,8 @@ async function main() {
     });
     process.exit(3);
   }
-  const report = readReport(stateDir, args.game, started.runId);
-  const reportFile = reportPathOf(stateDir, args.game, started.runId);
+  let report = readReport(stateDir, args.game, started.runId);
+  let reportFile = reportPathOf(stateDir, args.game, started.runId);
   if (!report) {
     log(stateDir, `no report at ${reportFile} (run dir ${runDirOf(stateDir, args.game, started.runId)})`);
     // 没有报告 = 出了没预料到的问题，也得让人知道。
@@ -201,6 +201,55 @@ async function main() {
     process.exit(1);
   }
   log(stateDir, `report status=${report.status || 'unknown'} file=${reportFile}`);
+
+  // 同一时间片内自己补跑。
+  // 之前「没做完」只能等下一天的计划任务（或者人工点一次）——
+  // 但日常的缺口大多当场就能补上（体力计划没跑成、活跃度差一截…）。
+  // 2026-11-03 实测：星铁第一轮卡在「点击进入」登录界面，体力计划整段被跳过，
+  // 活跃度只有 200/500 —— 当场补跑一轮就补齐了，不用等人。
+  const autoRetry = Number(game.autoRetry) || 0;
+  if (autoRetry > 0 && report.status !== 'success') {
+    for (let attempt = 1; attempt <= autoRetry; attempt += 1) {
+      const remainMs = deadline - Date.now();
+      if (remainMs < 5 * 60 * 1000) {
+        log(stateDir, `补跑预算不足（剩 ${Math.round(remainMs / 60000)} 分钟），放弃第 ${attempt} 次补跑`);
+        break;
+      }
+      log(stateDir, `第 ${attempt}/${autoRetry} 次补跑（上一轮 status=${report.status}）`);
+      const again = await startRun({
+        gameId: args.game,
+        mode: args.mode,
+        stateDir,
+        profile: args.profile,
+        trigger: 'schedule',
+        skillsRoot: args.skillsRoot || defaultSkillsRoot(),
+        timeoutMin,
+        guard,
+      });
+      if (!again.ok) {
+        log(stateDir, `补跑没起来：${again.error}`);
+        break;
+      }
+      if (again.skipped) {
+        log(stateDir, '补跑被幂等跳过（说明已经做完了）');
+        break;
+      }
+      const until = Date.now() + Math.max(60_000, Math.min(remainMs, 20 * 60 * 1000));
+      while (Date.now() < until) {
+        await sleep(5000);
+        if (!isRunning(stateDir, args.game)) break;
+      }
+      const next = readReport(stateDir, args.game, again.runId);
+      if (!next) {
+        log(stateDir, '补跑没有产出报告');
+        continue;
+      }
+      log(stateDir, `补跑报告 status=${next.status}`);
+      report = next;
+      reportFile = reportPathOf(stateDir, args.game, again.runId);
+      if (next.status === 'success') break;
+    }
+  }
 
   // 通知不依赖 DSH 开着：计划任务跑完直接弹一条，
   // 否则「人不在电脑前、DSH 没启动」的那天就完全没人知道结果。

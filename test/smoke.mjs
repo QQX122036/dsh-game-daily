@@ -21,7 +21,7 @@ import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/better
 import { businessDay, businessDayOfRunId, isPreviousCycle, DEFAULT_RESET_HOUR } from '../lib/dailycycle.mjs';
 import { mergeReport, readDaily, dailySummary, dailyDecision } from '../lib/daily-state.mjs';
 import { ensureCommissionFlows } from '../lib/bettergi-commission.mjs';
-import { todayRunStatus, acquireRunLock } from '../lib/runner.mjs';
+import { todayRunStatus, acquireRunLock, runOrder, decodeChildOutput } from '../lib/runner.mjs';
 import { zzzAppSnapshot, collectZzzAppRecords, appFingerprint } from '../lib/zzzrun.mjs';
 
 const results = [];
@@ -774,6 +774,41 @@ Promise.resolve()
         fs.rmSync(root, { recursive: true, force: true });
       }
     });
+    await checkAsync('运行顺序（按排班时间）', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-order-'));
+      try {
+        fs.writeFileSync(
+          path.join(dir, 'state.json'),
+          JSON.stringify({
+            games: {
+              sr: { enabled: true, schedule: { time: '10:30' } },
+              zzz: { enabled: true, schedule: { time: '11:00' } },
+              genshin: { enabled: true, schedule: { time: '12:00' } },
+              hi: { enabled: false, schedule: { time: '10:00' } },
+            },
+          }),
+          'utf8',
+        );
+        const order = runOrder(dir).map((item) => item.id);
+        // 机器下午才开机时三条任务会同时被拉起，顺序要按排班时间确定：
+        // 星铁 → 绝区零 → 原神（用户要求原神最后）。
+        if (order.join(',') !== 'sr,zzz,genshin') throw new Error(`顺序不对：${order.join(',')}`);
+        return `order=${order.join(' → ')}`;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await checkAsync('子进程输出解码（GBK）', async () => {
+      // M7A 的控制台输出是 GBK：按 UTF-8 解会变成乱码，日志没法看、也没法找关键字。
+      const gbk = Buffer.from([0xb5, 0xb1, 0xc7, 0xb0, 0xbd, 0xe7, 0xc3, 0xe6]); // 「当前界面」
+      const text = decodeChildOutput(gbk, true);
+      if (!text.includes('当前界面')) throw new Error(`GBK 解码不对：${text}`);
+      const utf8 = decodeChildOutput(Buffer.from('完成', 'utf8'), false);
+      if (utf8 !== '完成') throw new Error(`UTF-8 解码不对：${utf8}`);
+      return 'gbk/utf8 ok';
+    });
+
     await checkAsync('update helpers', async () => {
       const cases = [
         ['0.2.0', '0.2.0', 0],

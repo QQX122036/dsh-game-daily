@@ -309,7 +309,11 @@ async function main() {
       runId: args.runId,
       exitCode: code == null ? -1 : code,
       startedAt,
-      logText: collected,
+      // 前置配置组（每日委托）的日志要一起给报告解析：
+      // 委托是在一条龙之前跑的，它的日志行在文件里更早，
+      // 而一条龙这段的读取器是从「当前文件末尾」开始收的（只收新增）——
+      // 不拼上 groupText，报告里就没有「每日委托 · XXX」这些步骤。
+      logText: [groupText, collected].filter(Boolean).join('\n'),
     });
     process.stdout.write(`##REPORT ${JSON.stringify(report)}\n`);
     process.exit(0);

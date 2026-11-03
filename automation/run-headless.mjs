@@ -126,12 +126,13 @@ async function main() {
   if (started.skipped) {
     const skipReport = readReport(stateDir, args.game, started.runId) || {};
     const gaps = (skipReport.steps || []).map((s) => s.detail || '').filter(Boolean).join('、');
+    const reason = started.reason || skipReport.notes || '';
     notify({
       stateDir,
       title: `${game.title} 日常：已跳过`,
-      body: gaps ? `今天已经跑过，但还差：${gaps}` : '今天已经跑过，本次没有重复拉起游戏。',
+      body: gaps ? `今天已经跑过，但还差：${gaps}` : `今天已经跑过（${reason || '无需重复拉起游戏'}）。`,
     });
-    log(stateDir, `skipped: ${skipReport.notes || ''}`);
+    log(stateDir, `skipped: ${reason || skipReport.notes || ''}`);
     process.exit(0);
   }
 

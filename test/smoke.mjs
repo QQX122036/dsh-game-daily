@@ -799,14 +799,15 @@ Promise.resolve()
       }
     });
 
-    await checkAsync('子进程输出解码（GBK）', async () => {
-      // M7A 的控制台输出是 GBK：按 UTF-8 解会变成乱码，日志没法看、也没法找关键字。
-      const gbk = Buffer.from([0xb5, 0xb1, 0xc7, 0xb0, 0xbd, 0xe7, 0xc3, 0xe6]); // 「当前界面」
-      const text = decodeChildOutput(gbk, true);
-      if (!text.includes('当前界面')) throw new Error(`GBK 解码不对：${text}`);
-      const utf8 = decodeChildOutput(Buffer.from('完成', 'utf8'), false);
-      if (utf8 !== '完成') throw new Error(`UTF-8 解码不对：${utf8}`);
-      return 'gbk/utf8 ok';
+    await checkAsync('子进程输出解码（自动识别）', async () => {
+      // M7A 发出来的是 UTF-8 字节（只是控制台按 GBK 显示），
+      // 所以必须先严格按 UTF-8 解、失败再退回 GBK ——
+      // 之前一律按 GBK 解，把「开始运行」变成了「寮€濮嬭繍琛?」，日志也没法看了。
+      const gbk = Buffer.from([0xb5, 0xb1, 0xc7, 0xb0, 0xbd, 0xe7, 0xc3, 0xe6]); // 「当前界面」的 GBK 字节
+      const utf8 = Buffer.from('当前界面', 'utf8');
+      if (decodeChildOutput(utf8) !== '当前界面') throw new Error(`UTF-8 解码不对：${decodeChildOutput(utf8)}`);
+      if (decodeChildOutput(gbk) !== '当前界面') throw new Error(`GBK 回退不对：${decodeChildOutput(gbk)}`);
+      return 'utf8 优先、gbk 回退 ok';
     });
 
     await checkAsync('update helpers', async () => {

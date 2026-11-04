@@ -57,6 +57,18 @@ function parseArgs(argv) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (text) => process.stdout.write(`[bettergi] ${text}\n`);
 
+/**
+ * 报告用纯 ASCII 输出（中文转成 \uXXXX）。
+ *
+ * 这一行会被父进程从 stdout 里捞出来解析 —— 那一路上和控制台输出混在一起，
+ * 编码不定（BetterGI 的控制台输出是 UTF-8，偶尔混进非法字节就会整段乱码）。
+ * 转成 ASCII 之后，任何解码方式都不会影响报告里的中文。
+ */
+function jsonAscii(value) {
+  return JSON.stringify(value).replace(/[\u0080-\uffff]/g, (ch) =>
+    '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0'));
+}
+
 function killBettergi() {
   try {
     execFileSync('taskkill.exe', ['/F', '/IM', 'BetterGI.exe'], { windowsHide: true, timeout: 20000 });

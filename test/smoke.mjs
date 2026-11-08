@@ -14,7 +14,7 @@ import { resolveBettergiMcp, vendorPath, bundledPath } from '../lib/bettergi-mcp
 import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill, bundledSkillPath, installSkillGroup, runCoverage } from '../lib/skills.mjs';
 import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
-import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot, ZZZ_DISC_MISSION_TYPES, defaultZzzFallbackConfig, zzzFallbackConfig, findZzzChargePlanPath, buildZzzChargePlanScript } from '../lib/zzz.mjs';
+import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot, ZZZ_DISC_MISSION_TYPES, ZZZ_DISC_CHARACTER_TARGETS, defaultZzzFallbackConfig, zzzFallbackConfig, findZzzChargePlanPath, buildZzzChargePlanScript } from '../lib/zzz.mjs';
 import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mjs';
 import { parseM7aLog, m7aReport, resolveM7a, ensurePowerPlan } from '../lib/m7a.mjs';
 import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
@@ -739,17 +739,38 @@ Promise.resolve()
       if (def.enabled !== true) throw new Error('默认应启用兜底');
       if (def.agentPlanTimes !== 3) throw new Error(`代理人计划默认次数应为 3：${def.agentPlanTimes}`);
       if (String(def.agentCardNum) !== '5') throw new Error(`代理人计划默认应按 ×5 卡打：${def.agentCardNum}`);
-      if (def.discPlanTimes !== 4) throw new Error(`驱动盘计划默认次数应为 4：${def.discPlanTimes}`);
+      if (def.discPlanTimes !== 1) throw new Error(`每个驱动盘本的默认次数应为 1：${def.discPlanTimes}`);
       if (!names.has(def.missionTypeName)) throw new Error(`默认驱动盘类型不在表里：${def.missionTypeName}`);
+      if (!Array.isArray(def.missionTypeNames) || !def.missionTypeNames.length) {
+        throw new Error('默认应给出驱动盘副本清单 missionTypeNames');
+      }
+      for (const name of def.missionTypeNames) {
+        if (!names.has(name)) throw new Error(`默认驱动盘清单里有未知副本：${name}`);
+      }
+      // 目标角色的套装必须都能在区域巡防里刷到
+      for (const target of ZZZ_DISC_CHARACTER_TARGETS) {
+        const wanted = Object.values(target.sets || {}).flat();
+        if (!wanted.length) throw new Error(`${target.character} 没有登记驱动盘需求`);
+        for (const set of wanted) {
+          const hit = ZZZ_DISC_MISSION_TYPES.find((it) => it.discs.includes(set));
+          if (!hit) throw new Error(`${target.character} 需要的套装没有对应副本：${set}`);
+          if (!target.missionTypeNames.includes(hit.missionTypeName)) {
+            throw new Error(`${target.character} 的副本清单漏了 ${set}（${hit.missionTypeName}）`);
+          }
+        }
+      }
       const merged = zzzFallbackConfig();
       if (!names.has(merged.missionTypeName)) throw new Error('zzzFallbackConfig 返回的 missionTypeName 非法');
+      if (!Array.isArray(merged.missionTypeNames) || !merged.missionTypeNames.length) {
+        throw new Error('zzzFallbackConfig 返回的 missionTypeNames 非法');
+      }
       const yml = findZzzChargePlanPath('C:\\OD', 2);
       if (!yml.endsWith(path.join('config', '02', 'one_dragon', 'charge_plan.yml'))) throw new Error(`charge_plan 路径异常：${yml}`);
       const script = buildZzzChargePlanScript();
       for (const token of ['charge_plan.yml', '代理人方案培养', '区域巡防', 'yaml.dump', "newline='\\n'", 'agent.card_num']) {
         if (!script.includes(token)) throw new Error(`脚本缺少片段：${token}`);
       }
-      return `types=${ZZZ_DISC_MISSION_TYPES.length} default=${def.missionTypeName} agent=${def.agentPlanTimes}x${def.agentCardNum} disc=${def.discPlanTimes}`;
+      return `types=${ZZZ_DISC_MISSION_TYPES.length} default=${def.missionTypeName} list=${def.missionTypeNames.join('/')} agent=${def.agentPlanTimes}x${def.agentCardNum} disc=${def.discPlanTimes}`;
     });
     check('manifest has no BOM', () => {
       // PowerShell 的 Set-Content -Encoding UTF8 会写 BOM；DSH 用 JSON.parse 读 bundle 清单，

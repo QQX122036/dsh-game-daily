@@ -164,8 +164,8 @@
 ### 绝区零（engine = zzz-od）
 
 - 画面识别与点击全部交给 ZenlessZoneZero-OneDragon「一条龙」，插件通过自带 `tools/zzz-od-mcp`（12 个工具）驱动它的 HTTP 后端；真实运行前会自动确保后端在跑（可能弹一次 UAC），跑完关游戏、停后端。默认排班每天 09:00。
-- **清体力兜底**：一条龙的「代理人方案培养（特训目标）」计划一旦结算出现「特训目标已达成」就会被跳过。插件在每次真实运行前改写 `config/<实例>/one_dragon/charge_plan.yml`：①代理人计划 `card_num` 5（每次 100 电量）+`plan_times` 3（≈300 电量，材料没满时刷完）②紧随其后一条「区域巡防」驱动盘计划 `plan_times` 4（≈240 电量）。驱动盘副本由 `zzz-fallback.json` 的 `missionTypeName` 决定（`--list` 查表、`--mission` 切换），`trainedCharacter` 仅用于汇报。于是材料够了以后，剩余电量自动落在驱动盘本上；改前备份 `charge_plan.yml.bak-gd-disc-<时间戳>`，一条龙每轮重读配置、下一次运行即生效。
-- 选哪套驱动盘在 `<stateDir>/zzz-fallback.json` 的 `missionTypeName`（默认「怪兽与怪客」= 摇摆爵士/混沌重金属），也可用 `node automation/zzz-fallback.mjs --mission ...`；`--list` 列 15 个副本，`--dry-run` 只看不改。
+- **清体力（电量全刷驱动盘）**：插件在每次真实运行前改写 `config/<实例>/one_dragon/charge_plan.yml`，把 `plan_list` 换成「区域巡防」驱动盘计划清单（每个副本类型一条，60 电量/次，`loop: true` 一直刷到电量不够，`restore_charge: 不使用` 不碰储蓄电量/以太电池）。默认清单按目标角色的套装需求排序：锐牙与钝斧（自由蓝调）→ 迅脊与裂爪（谶羽之誓）→ 游侠与守卫（法厄同之歌）→ 猎手与凶兽（混沌爵士）→ 疯子与追随者（炎狱重金属）。目标角色：**蕾米埃尔**（流明·异常，4 件套谶羽之誓 + 2 件套自由蓝调/混沌爵士）与 **菲欧妮**（火·异常，4 件套自由蓝调 + 2 件套法厄同之歌），登记在 `lib/zzz.mjs` 的 `ZZZ_DISC_CHARACTER_TARGETS`；改前备份 `charge_plan.yml.bak-gd-disc-<时间戳>`，一条龙每轮重读配置、下一次运行即生效。
+- 刷哪几个本在 `<stateDir>/zzz-fallback.json` 的 `missionTypeNames`（默认上面 5 个），也可用 `node automation/zzz-fallback.mjs --missions 锐牙与钝斧,迅脊与裂爪`；`--list` 列 15 个副本、对应套装与目标角色，`--dry-run` 只看不改。
 
 ---
 

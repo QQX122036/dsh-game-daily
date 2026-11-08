@@ -135,8 +135,18 @@ All screen recognition and clicking for ZZZ is delegated to [ZenlessZoneZero-One
 - **OneDragon itself can be installed in one click**: when the ZZZ dependency check reports it missing, pressing "Let DSH fix this" runs `git clone` (or a zip download when git is absent) + `uv sync` + writes the base config (`config/01/game.yml`, `game_account.yml`). It installs to `D:\software\ZenlessZoneZero-OneDragon` by default and **never into the system drive**; set `DSH_GAME_DAILY_ZZZ_ROOT` to choose another location (C: is still rejected). The first install downloads hundreds of MB and takes a few minutes, so the button keeps showing "Working…". The chosen root is recorded in `<stateDir>/zzz-root.txt` and used by later checks and runs.
 - **Privileges**: ZZZ runs elevated, so switching its window / sending input needs an **elevated backend**. When the dependency check finds it down, it offers **Start OneDragon backend (one UAC)**; the runner also tries to start it before a real run.
 - **Flow**: `zzz_health → zzz_window → (zzz_enter if the window is not ready) → zzz_run_one_dragon → zzz_wait in a loop → zzz_status`; after the run the plugin closes the game and stops the backend. Known trap: running one-dragon while the game sits on the title screen makes the first app (mail) fail with "cannot recognise the screen", so `zzz_enter` first.
-- **Stamina fallback (farm drive discs once the agent's materials are done)**: in one-dragon's charge plan, the "Agent training plan (特训目标)" entry is marked skipped as soon as the battle result screen says the training goal is reached, and the next plan in the list takes over. Before every real run the plugin therefore rewrites `config/<instance>/one_dragon/charge_plan.yml` into two plans: ① the agent plan with `card_num` 5 (100 stamina per run) and `plan_times` 3 (≈300 stamina — drains the bar while materials are still needed) ② an "Area Patrol" (drive-disc stage) plan right after it with `plan_times` 4 (≈240 stamina). The drive-disc stage is chosen by `missionTypeName` in `~/.dsh/game-daily/zzz-fallback.json` (`node automation/zzz-fallback.mjs --list` / `--mission <name>`; `trainedCharacter` is for reporting only). Once the materials are done, the remaining stamina naturally lands on drive discs.
-  - Pick the disc stage with `{"missionTypeName":"怪兽与怪客"}` in `<stateDir>/zzz-fallback.json` (the default), or `node automation/zzz-fallback.mjs --mission <name>`; `--list` prints the 15 stages and the two sets each one drops.
+- **Stamina (the whole charge bar goes into drive discs)**: before every real run the plugin rewrites `config/<instance>/one_dragon/charge_plan.yml` so `plan_list` is a list of "Area Patrol" (区域巡防) drive-disc stages — one per stage type, 60 charge each, `loop: true` so it keeps going until the charge runs out, and `restore_charge: 不使用` so it never touches the backup charge / ether batteries. The default list is ordered by the drive-disc sets the target characters need:
+
+  | # | Area Patrol stage | Sets dropped | Needed by |
+  |---|---|---|---|
+  | 1 | 锐牙与钝斧 | 自由蓝调 / 极地重金属 | Fionne 4-piece, Remiel 2-piece |
+  | 2 | 迅脊与裂爪 | 谶羽之誓 / 荆棘玫瑰 | Remiel 4-piece |
+  | 3 | 游侠与守卫 | 如影相随 / 法厄同之歌 | Fionne 2-piece |
+  | 4 | 猎手与凶兽 | 混沌爵士 / 原始朋克 | Remiel 2-piece (alt) |
+  | 5 | 疯子与追随者 | 河豚电音 / 炎狱重金属 | Fionne alt 4-piece |
+
+  Target characters: **蕾米埃尔 / Remiel** (Lumen attribute, Anomaly — wiki 3.1: 4-piece 谶羽之誓 + 2-piece 自由蓝调 / 混沌爵士) and **菲欧妮 / Fionne** (Fire, Anomaly — miyoushe/3DM: 4-piece 自由蓝调 + 2-piece 法厄同之歌). They are registered in `lib/zzz.mjs` as `ZZZ_DISC_CHARACTER_TARGETS`.
+  - Change the list with `{"missionTypeNames":["锐牙与钝斧","迅脊与裂爪"]}` in `<stateDir>/zzz-fallback.json`, or `node automation/zzz-fallback.mjs --missions 锐牙与钝斧,迅脊与裂爪`; `--list` prints the 15 stages, their sets and the target characters.
   - Preview only: `node automation/zzz-fallback.mjs --dry-run`; show the current config and paths: `--config`.
   - Each rewrite backs up to `charge_plan.yml.bak-gd-disc-<timestamp>`; one-dragon re-reads its config before every run, so the change takes effect on the next run without restarting the backend.
 ## Auto-update

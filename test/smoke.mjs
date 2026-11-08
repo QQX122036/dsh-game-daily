@@ -9,12 +9,12 @@ import { probeDependencies, resolveDsh } from '../lib/deps.mjs';
 import { buildRunPrompt, buildInstallPrompt, buildReportPrompt } from '../lib/prompt.mjs';
 import { newRunId, summaryOf, listRuns, writeJson, metaPathOf, reportPathOf } from '../lib/report.mjs';
 import { queryTasks, taskStatus, refreshTaskInfo, readTaskDefinition, computeNextRun } from '../lib/tasks.mjs';
-import { guardScriptPath, guardStatus, aliveFromError, readRunner } from '../lib/runner.mjs';
+import { guardScriptPath, guardStatus, aliveFromError, readRunner, ensureOverlay } from '../lib/runner.mjs';
 import { resolveBettergiMcp, vendorPath, bundledPath } from '../lib/bettergi-mcp.mjs';
-import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill, bundledSkillPath } from '../lib/skills.mjs';
+import { SKILL_REPOS, inspectSkill, skillInstallPath, installSkill, bundledSkillPath, installSkillGroup, runCoverage } from '../lib/skills.mjs';
 import { registerBettergiMcp, hasBettergiMcpRow, bettergiMcpPatchPath } from '../lib/mcp-register.mjs';
 import { GAME_PROCESSES, runningGames, closeGame } from '../lib/gameproc.mjs';
-import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot } from '../lib/zzz.mjs';
+import { inspectZzzInstall, zzzHealthSync, zzzBaseUrl, zzzInstallTargets, ensureZzzConfigs, detectZzzGamePath, inspectZzzInstallRoot, ZZZ_DISC_MISSION_TYPES, defaultZzzFallbackConfig, zzzFallbackConfig, findZzzChargePlanPath, buildZzzChargePlanScript } from '../lib/zzz.mjs';
 import { compareVersions, readLocalVersion, readPackage } from '../lib/update.mjs';
 import { parseM7aLog, m7aReport, resolveM7a, ensurePowerPlan } from '../lib/m7a.mjs';
 import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
@@ -23,6 +23,8 @@ import { mergeReport, readDaily, dailySummary, dailyDecision } from '../lib/dail
 import { ensureCommissionFlows } from '../lib/bettergi-commission.mjs';
 import { todayRunStatus, acquireRunLock, runOrder, decodeChildOutput } from '../lib/runner.mjs';
 import { zzzAppSnapshot, collectZzzAppRecords, appFingerprint } from '../lib/zzzrun.mjs';
+import { appendSession } from '../lib/install.mjs';
+import { inspectM7aInstallRoot, extractJson, m7aFacts, DEFAULT_M7A_TASK, exitMeaning } from '../lib/m7a.mjs';
 
 const results = [];
 // 后台刷新一次任务信息，验证异步 PowerShell 路径（真实环境里这一步由请求触发、不阻塞 UI）。
@@ -531,7 +533,8 @@ Promise.resolve()
   .then(async () => {
     check('dsh resolve', () => {
       const dsh = resolveDsh();
-      if (!dsh) throw new Error('找不到 dsh CLI');
+      // GitHub-hosted runner 默认没有 dsh CLI：这属于环境差异，不算失败，只把结论写进 detail。
+      if (!dsh) return '未安装 dsh CLI（CI 环境跳过）';
       return `${dsh.kind} ${dsh.bin}`;
     });
     check('dependencies probe', () => {
@@ -721,6 +724,33 @@ Promise.resolve()
         fs.rmSync(tmp, { recursive: true, force: true });
       }
     });
+    check('zzz charge-plan disc fallback', () => {
+      if (!Array.isArray(ZZZ_DISC_MISSION_TYPES) || ZZZ_DISC_MISSION_TYPES.length !== 15) {
+        throw new Error(`驱动盘副本类型应为 15 个：${ZZZ_DISC_MISSION_TYPES.length}`);
+      }
+      const names = new Set();
+      for (const item of ZZZ_DISC_MISSION_TYPES) {
+        if (!item.missionTypeName) throw new Error('副本类型缺 missionTypeName');
+        if (!Array.isArray(item.discs) || item.discs.length !== 2) throw new Error(`驱动盘对应关系异常：${item.missionTypeName}`);
+        if (names.has(item.missionTypeName)) throw new Error(`副本类型重复：${item.missionTypeName}`);
+        names.add(item.missionTypeName);
+      }
+      const def = defaultZzzFallbackConfig();
+      if (def.enabled !== true) throw new Error('默认应启用兜底');
+      if (def.agentPlanTimes !== 3) throw new Error(`代理人计划默认次数应为 3：${def.agentPlanTimes}`);
+      if (String(def.agentCardNum) !== '5') throw new Error(`代理人计划默认应按 ×5 卡打：${def.agentCardNum}`);
+      if (def.discPlanTimes !== 4) throw new Error(`驱动盘计划默认次数应为 4：${def.discPlanTimes}`);
+      if (!names.has(def.missionTypeName)) throw new Error(`默认驱动盘类型不在表里：${def.missionTypeName}`);
+      const merged = zzzFallbackConfig();
+      if (!names.has(merged.missionTypeName)) throw new Error('zzzFallbackConfig 返回的 missionTypeName 非法');
+      const yml = findZzzChargePlanPath('C:\\OD', 2);
+      if (!yml.endsWith(path.join('config', '02', 'one_dragon', 'charge_plan.yml'))) throw new Error(`charge_plan 路径异常：${yml}`);
+      const script = buildZzzChargePlanScript();
+      for (const token of ['charge_plan.yml', '代理人方案培养', '区域巡防', 'yaml.dump', "newline='\\n'", 'agent.card_num']) {
+        if (!script.includes(token)) throw new Error(`脚本缺少片段：${token}`);
+      }
+      return `types=${ZZZ_DISC_MISSION_TYPES.length} default=${def.missionTypeName} agent=${def.agentPlanTimes}x${def.agentCardNum} disc=${def.discPlanTimes}`;
+    });
     check('manifest has no BOM', () => {
       // PowerShell 的 Set-Content -Encoding UTF8 会写 BOM；DSH 用 JSON.parse 读 bundle 清单，
       // 带 BOM 会让 bundle 变成 availability=missing、整插件不加载（设置页条目消失）。
@@ -830,6 +860,144 @@ Promise.resolve()
       if (compareVersions('9.9.9', local) <= 0) throw new Error('远端更高版本应判定为有更新');
       return `local=${local}`;
     });
+    await checkAsync('game-daily 技能族自动安装', async () => {
+      // 1) 三条注册项：同一个 zip、各自 subdir、required/minFiles 合法
+      const family = ['game-daily', 'game-daily-hi', 'game-daily-sr'];
+      const zips = new Set();
+      for (const name of family) {
+        const spec = SKILL_REPOS[name];
+        if (!spec) throw new Error(`SKILL_REPOS 缺 ${name}`);
+        if (spec.subdir !== name) throw new Error(`${name}.subdir 应为 ${name}，实际 ${spec.subdir}`);
+        if (!Array.isArray(spec.required) || !spec.required.includes('SKILL.md')) throw new Error(`${name} 必须 required 含 SKILL.md`);
+        if (!spec.zip || !/codeload\.github\.com/.test(spec.zip)) throw new Error(`${name} 缺 codeload zip`);
+        zips.add(spec.zip);
+      }
+      if (zips.size !== 1) throw new Error(`三套技能应共用一个 zip，实际 ${zips.size} 个`);
+      if (!/gychen-NJU\/game-daily/.test(SKILL_REPOS['game-daily'].repo)) throw new Error('repo 应为 gychen-NJU/game-daily');
+      // 2) 未知技能 / 缺 root / bundled 缺失时的错误必须清晰（不联网）
+      const unknown = await installSkill('nope-skill', { root: os.tmpdir() });
+      if (unknown.ok !== false || !/未知技能/.test(unknown.error)) throw new Error('未知技能应报「未知技能」');
+      const noRoot = await installSkill('game-daily', { root: '' });
+      if (noRoot.ok !== false || !/技能根目录/.test(noRoot.error)) throw new Error('缺 root 应报技能根目录');
+      const noBundle = await installSkill('game-daily-hi', { root: os.tmpdir(), source: 'bundled' });
+      if (noBundle.ok !== false || !/没有自带/.test(noBundle.error)) throw new Error('插件没自带时应报「没有自带该技能」');
+      // 3) coverage：技能不存在时安静返回空数组（不抛）
+      const empty = runCoverage(path.join(os.tmpdir(), 'gd-no-such-skills-root'));
+      if (!Array.isArray(empty) || empty.length !== 0) throw new Error('coverage 在缺技能时应返回空数组');
+      return `family=3 zip=1 subdir ok, 错误文案与 coverage 兜底 ok`;
+    });
+    await checkAsync('report session reuse', async () => {
+      const state = normalizeState({ reportSessionIds: { genshin: 'session-abc', hi: 'nope', sr: 'session-9' } });
+      if (state.reportSessionIds.genshin !== 'session-abc') throw new Error('应保留合法 sessionId');
+      if (state.reportSessionIds.hi) throw new Error('应丢弃非法 sessionId');
+      if (state.reportSessionIds.sr !== 'session-9') throw new Error('应保留 session-9');
+      const calls = [];
+      const ctx = {
+        get(key) {
+          if (key !== 'sessionController') return undefined;
+          return { prompt: async (req) => { calls.push(req); } };
+        },
+      };
+      const ok = await appendSession(ctx, { sessionId: 'session-abc', prompt: 'hi' });
+      if (!ok.ok || calls.length !== 1 || calls[0].sessionId !== 'session-abc') throw new Error('追加应调用 prompt');
+      if (!Array.isArray(calls[0].content) || calls[0].content[0].text !== 'hi') throw new Error('prompt 内容不对');
+      const bad = await appendSession(
+        { get: () => ({ prompt: async () => { throw new Error('gone'); } }) },
+        { sessionId: 'session-x', prompt: 'hi' },
+      );
+      if (bad.ok !== false) throw new Error('会话不可用时应返回 ok:false');
+      const empty = await appendSession(ctx, { sessionId: '', prompt: 'hi' });
+      if (empty.ok !== false) throw new Error('没有 sessionId 时应返回 ok:false');
+      return 'reuse ok';
+    });
+check('三月七小助手（m7a）：注册 / 体检 / 提示词', () => {
+  const sr = gameById('sr');
+  if (sr.engine !== 'm7a') throw new Error(`星铁引擎应为 m7a，实际 ${sr.engine}`);
+  if (sr.skillModule !== 'm7a-control') throw new Error(`星铁 skillModule 应为 m7a-control，实际 ${sr.skillModule}`);
+  const deps = probeDependencies(['sr'], { stateDir: os.tmpdir() });
+  const ids = deps.checks.map((c) => c.id);
+  for (const id of ['m7a', 'm7a-skill', 'm7a-mcp']) {
+    if (!ids.includes(id)) throw new Error(`星铁体检缺 ${id}（实际 ${ids.join(',')}）`);
+  }
+  const m7a = deps.checks.find((c) => c.id === 'm7a');
+  if (m7a.status === 'missing') {
+    if (!m7a.blocker) throw new Error('未安装 M7A 应标 blocker');
+    if (!m7a.fix || m7a.fix.action !== 'install-m7a') throw new Error(`未安装时应给 install-m7a，实际 ${JSON.stringify(m7a.fix)}`);
+  } else if (m7a.status === 'warn') {
+    // warn 分两种：可修的（首次未确认/路径失效）必须带 fix；正在跑（active_run）属于正常值守状态，不需要 fix。
+    if (m7a.fix) {
+      if (!['install-m7a', 'setup-m7a'].includes(m7a.fix.action)) {
+        throw new Error(`warn 的 fix 只能是 install-m7a/setup-m7a，实际 ${JSON.stringify(m7a.fix)}`);
+      }
+    } else if (!/运行中|正在运行|active_run|正在跑/.test(String(m7a.detail || ''))) {
+      throw new Error(`warn 没有 fix 时必须在 detail 里说明原因（运行中），实际 ${JSON.stringify(m7a.detail)}`);
+    }
+  }
+  const prompt = buildRunPrompt({ game: sr, mode: 'real', runId: 't', runDir: 'X:/r', reportPath: 'X:/r/report.json', skillsRoot: 'X:/s', stateDir: 'X:/st' });
+  if (!prompt.includes('三月七小助手')) throw new Error('星铁 prompt 没提三月七小助手');
+  if (prompt.includes('先用 skill 工具加载技能')) throw new Error('星铁 prompt 不该再要求外部技能');
+  if (!prompt.includes('--after-finish None')) throw new Error('星铁 prompt 缺 --after-finish None 约束');
+  if (!prompt.includes('培养目标') || !prompt.includes('拟造花萼（赤）')) {
+    throw new Error('星铁 prompt 没写清体力用途口径（只刷培养目标、拟造花萼（赤））');
+  }
+  const installHint = buildInstallPrompt({ action: 'install-m7a', gameId: 'sr' });
+  if (!installHint.includes('March7thAssistant')) throw new Error('install-m7a 的修复线索没写清楚');
+  if (!installHint.includes('目录')) throw new Error('install-m7a 的修复线索没有要求先问安装目录');
+  if (!installHint.includes('C 盘')) throw new Error('install-m7a 的修复线索没有说明默认不装 C 盘');
+  return `${m7a.status}${m7a.fix ? '/' + m7a.fix.action : ''} · ${ids.filter((i) => i.startsWith('m7a')).join(',')}`;
+});
+
+check('三月七小助手（m7a）：安装目录识别与 JSON 容错', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'm7a-'));
+  const okDir = path.join(tmp, 'full');
+  fs.mkdirSync(okDir, { recursive: true });
+  fs.writeFileSync(path.join(okDir, 'm7a.exe'), '');
+  fs.writeFileSync(path.join(okDir, 'config.yaml'), 'game_path: D:/StarRail\n');
+  const legacyDir = path.join(tmp, 'legacy');
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, 'March7th Assistant.exe'), '');
+  const emptyDir = path.join(tmp, 'empty');
+  fs.mkdirSync(emptyDir, { recursive: true });
+
+  const ok = inspectM7aInstallRoot(okDir);
+  if (!ok.hasExe || !ok.looksLikeRoot) throw new Error(`有 m7a.exe 应判为安装目录：${JSON.stringify(ok)}`);
+  const legacy = inspectM7aInstallRoot(legacyDir);
+  if (legacy.hasExe || !legacy.legacyOnly) throw new Error(`只有旧版 exe 应判 legacyOnly：${JSON.stringify(legacy)}`);
+  const none = inspectM7aInstallRoot(emptyDir);
+  if (none.hasExe || none.looksLikeRoot) throw new Error('空目录不该判为安装目录');
+  const parsed = extractJson('log line\n{"status":"ok","reason":"\\u672a\\u5f00\\u59cb"}\ntail');
+  if (!parsed || parsed.status !== 'ok' || !parsed.reason.includes('未')) throw new Error(`extractJson 没解析出中文：${JSON.stringify(parsed)}`);
+  const facts = m7aFacts();
+  const lines = typeof facts === 'string' ? facts : (facts.lines || []).join('\n');
+  if (!lines.includes('三月七小助手')) throw new Error('m7aFacts 文案缺主体');
+  if (exitMeaning(3) === exitMeaning(0)) throw new Error('exitMeaning 没有区分 0/3');
+  if (DEFAULT_M7A_TASK !== 'main') throw new Error(`默认任务应为 main，实际 ${DEFAULT_M7A_TASK}`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return `ok/legacy/empty 三态正确 · extractJson 中文 ok · 默认 ${DEFAULT_M7A_TASK}`;
+});
+check('三月七小助手（m7a）：overlay / prompt 对字符串 game id 也生效', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-overlay-'));
+  const ov = ensureOverlay({ stateDir: dir, game: 'sr' });
+  if (!ov || ov.ok !== true || ov.hasMcp !== true) {
+    throw new Error(`sr 的 overlay 没注入 m7a MCP：${JSON.stringify(ov)}`);
+  }
+  const prompt = buildRunPrompt({
+    game: 'sr',
+    mode: 'real',
+    runId: 't-1',
+    runDir: dir,
+    reportPath: path.join(dir, 'report.json'),
+    skillsRoot: 'C:\\skills',
+    stateDir: dir,
+  });
+  if (!prompt.includes('三月七小助手')) throw new Error('字符串 game id 的 prompt 没走 M7A 分支');
+  if (!/m7a_status|m7a_run/.test(prompt)) throw new Error('prompt 里没有 m7a 工具说明');
+  let threw = false;
+  try { buildRunPrompt({ game: null }); } catch { threw = true; }
+  if (!threw) throw new Error('缺 game 时 buildRunPrompt 应当直接报错');
+  const bad = ensureOverlay({ stateDir: dir, game: null });
+  if (!bad || bad.ok !== false) throw new Error('缺 game 时 ensureOverlay 应当返回 ok:false');
+});
     for (const item of results) console.log(`${item.ok ? 'PASS' : 'FAIL'}  ${item.name}  ${item.detail}`);
     exitCode = results.some((item) => !item.ok) ? 1 : 0;
     console.log(JSON.stringify({ ok: exitCode === 0, total: results.length, failed: results.filter((r) => !r.ok).length }));

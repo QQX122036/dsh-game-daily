@@ -22,13 +22,14 @@ import { startRun, stopRun, readRunner, isRunning } from './lib/runner.mjs';
 import { listRuns, readReport, metaPathOf, readJsonSafe } from './lib/report.mjs';
 import { dailySummary, dailyNotifiedStatus, markDailyNotified, mergeReport } from './lib/daily-state.mjs';
 import { buildInstallPrompt, buildReportPrompt } from './lib/prompt.mjs';
-import { openSession } from './lib/install.mjs';
+import { openSession, appendSession, sessionExists } from './lib/install.mjs';
 import { notify } from './lib/notify.mjs';
 import { resolveBettergiMcp, fetchBettergiMcp } from './lib/bettergi-mcp.mjs';
-import { installSkill } from './lib/skills.mjs';
+import { installSkill, installSkillGroup, runCoverage } from './lib/skills.mjs';
 import { registerBettergiMcp } from './lib/mcp-register.mjs';
 import { resolveNodeExe } from './lib/nodeexe.mjs';
 import { ensureZzzServer, installZzzOneDragon } from './lib/zzz.mjs';
+import { m7aFacts, m7aInstallInfo } from './lib/m7a.mjs';
 import { checkForUpdate, applyUpdate, readLocalVersion } from './lib/update.mjs';
 
 export const name = 'game-daily';
@@ -166,6 +167,20 @@ function makeLogger(ctx) {
   };
 }
 
+/**
+ * 汇报投递的落盘日志（`<stateDir>/automation/report.log`）。
+ * Host logger 不落盘，出问题时无从查证——投递路径的每一步都写这里。
+ */
+function deliveryLog(stateDir, line) {
+  try {
+    const dir = path.join(stateDir, 'automation');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'report.log'), `[${new Date().toISOString()}] ${line}\n`, 'utf8');
+  } catch {
+    /* 日志写不进去不影响投递 */
+  }
+}
+
 export function apply(ctx) {
   const env = pluginEnv();
   const store = new Store({ dir: env.stateDir, taskPrefix: env.taskPrefix });
@@ -256,6 +271,7 @@ export function apply(ctx) {
         };
       }),
       lastError: store.lastError || '',
+      reportSessionIds: { ...(state.reportSessionIds || {}) },
     };
   };
 
@@ -362,19 +378,46 @@ export function apply(ctx) {
       }
       if (!alreadyNotified && store.get().ui.reportSessions !== false) {
         try {
-          const result = await openSession(ctx, {
-            title: `游戏日常 · ${game.title} 汇报`,
-            cwd: env.stateDir,
-            prompt: buildReportPrompt({
-              game,
-              runId: run.runId,
-              report,
-              reportPath: path.join(run.dir, 'report.json'),
-            }),
+          const prompt = buildReportPrompt({
+            game,
+            runId: run.runId,
+            report,
+            reportPath: path.join(run.dir, 'report.json'),
           });
-          if (!result.ok) logger.log(`汇报会话创建失败：${result.error}`);
+          const title = `游戏日常 · ${game.title} 汇报`;
+          const saved = store.get().reportSessionIds?.[game.id] || '';
+          // 每个游戏只保留一个汇报会话：有旧的就往里追加，旧会话被删/不可用才新建。
+          const alive = saved ? await sessionExists(ctx, saved) : false;
+          deliveryLog(env.stateDir, `${game.id}/${run.runId} saved=${saved || '(空)'} alive=${alive}`);
+          let result = saved && alive ? await appendSession(ctx, { sessionId: saved, prompt }) : null;
+          if (!result || !result.ok) {
+            if (saved) {
+              const why = result ? result.error : alive ? '未知（未投递）' : '旧汇报会话已不存在（可能被删了）';
+              deliveryLog(env.stateDir, `${game.id}/${run.runId} 复用失败：${why}；改为新建`);
+              logger.log(`复用汇报会话失败（${saved}）：${why}；改为新建`);
+            }
+            result = await openSession(ctx, {
+              title,
+              cwd: env.stateDir,
+              prompt,
+            });
+            deliveryLog(env.stateDir, `${game.id}/${run.runId} 新建会话 ok=${result.ok} id=${result.sessionId || ''} err=${result.error || ''}`);
+          } else {
+            deliveryLog(env.stateDir, `${game.id}/${run.runId} 已追加到 ${result.sessionId}`);
+          }
+          if (result.ok) {
+            if (result.sessionId !== saved) {
+              store.mutate((current) => {
+                current.reportSessionIds = { ...(current.reportSessionIds || {}), [game.id]: result.sessionId };
+              });
+            }
+          } else {
+            logger.log(`汇报会话创建失败：${result.error}`);
+            deliveryLog(env.stateDir, `${game.id}/${run.runId} 汇报会话创建失败：${result.error}`);
+          }
         } catch (error) {
           logger.log(`汇报会话异常：${String((error && error.message) || error)}`);
+          deliveryLog(env.stateDir, `${game.id}/${run.runId} 汇报会话异常：${String((error && error.message) || error)}`);
         }
       }
       store.mutate((current) => {
@@ -578,6 +621,31 @@ export function apply(ctx) {
             : installed.error,
         };
       }
+      if (body.action === 'install-game-daily-skills' || body.action === 'install-skills') {
+        // 崩三 / 星铁技能族：game-daily（公共层）+ game-daily-hi + game-daily-sr 共用一个仓库 zip。
+        // 三套只下载一次，装完立刻跑 coverage 自检（模板/锚点/变体是否齐）。
+        const group = await installSkillGroup(['game-daily', 'game-daily-hi', 'game-daily-sr'], {
+          root: env.skillsRoot,
+        });
+        const done = (group.results || []).filter((item) => item.ok === true);
+        const failed = (group.results || []).filter((item) => item.ok !== true);
+        const parts = [];
+        if (done.length) {
+          parts.push(
+            `已安装 ${done.map((item) => `${item.name}（${item.files} 文件，来自${item.source === 'bundled' ? '插件自带副本' : ' GitHub'}）`).join('、')}`
+          );
+        }
+        if (failed.length) parts.push(`失败：${failed.map((item) => `${item.name}：${item.error}`).join('；')}`);
+        const coverage = runCoverage(env.skillsRoot, ['game-daily-hi', 'game-daily-sr']);
+        if (coverage.length) parts.push(coverage.join('；'));
+        return {
+          ok: group.ok === true,
+          action: body.action,
+          group,
+          coverage,
+          note: parts.join('；') || '没有安装任何技能',
+        };
+      }
       if (body.action === 'start-zzz-server') {
         const result = await ensureZzzServer({ timeoutSeconds: 45 });
         return {
@@ -641,15 +709,32 @@ export function apply(ctx) {
         };
       }
       const gameId = GAME_IDS.includes(body.game) ? body.game : '';
-      const prompt = body.prompt || buildInstallPrompt({
+      let prompt = body.prompt || buildInstallPrompt({
         action: body.action || '',
         gameId,
         checkId: body.checkId || '',
         checkDetail: body.checkDetail || '',
       });
-      const title = body.title || '游戏日常 · 依赖修复';
+      // 三月七小助手：安装 / 首次配置都交给 Agent，附上本机探测到的事实与约束。
+      if (body.action === 'install-m7a' || body.action === 'setup-m7a') {
+        const install = m7aInstallInfo();
+        let facts = '';
+        try {
+          const f = m7aFacts();
+          facts = typeof f === 'string' ? f : (f && Array.isArray(f.lines) ? f.lines.join('\n') : '');
+        } catch (err) {
+          facts = `m7aFacts 探测失败：${err && err.message ? err.message : err}`;
+        }
+        prompt +=
+          '\n\n【本机三月七小助手（M7A）探测结果】\n' +
+          `已安装：${install.ok ? `是（${install.root}）` : '否'}${install.legacyOnly ? `；只找到旧版：${install.legacyRoot}` : ''}` +
+          (install.searched && install.searched.length ? `\n搜索过：${install.searched.join('、')}` : '') +
+          (facts ? `\n${facts}` : '') +
+          '\n\n硬约束：① **安装前必须先问用户要装到哪个目录**（默认不要选 C 盘，解压后约 1.5GB；用户没答复前不要下载/解压）；② 绝不要替用户确认免责声明（first_run_completed 只能用户本人在 March7th Launcher.exe 里点）；③ 安装目录不要放 C:\\Program Files；④ 改 config.yaml 前先备份，改完用 `m7a.exe --status --json` 回读验证；⑤ 装完把面板体检截图/命令输出贴出来。';
+      }
+      const title = body.title || (body.action === 'install-m7a' || body.action === 'setup-m7a' ? '游戏日常 · 三月七小助手' : '游戏日常 · 依赖修复');
       const result = await openSession(ctx, { prompt, title, cwd: env.stateDir });
-      return { ok: result.ok === true, sessionId: result.sessionId || '', error: result.error };
+      return { ok: result.ok === true, sessionId: result.sessionId || '', error: result.error, action: body.action || '' };
     },
 
     'GET /runs': async (req, url) => {

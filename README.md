@@ -168,6 +168,15 @@ BetterGI **官方没有**「每日委托」任务：源码里 `ViewModel/Pages/O
    - 就算它是空的也不会漏：跑之前会在 `User\ScriptGroup\` 里找名字带「委托」的组（默认「每日委托」），
      找到就用（`lib/runner.mjs` 的 `detectCommissionGroups`）。
 3. 脚本的账号配置落在 `User\JsScript\AutoCommissionNova\Data\user-config\`。
+4. **历练点优先 → 脚本兜底**（2026-11-09 按用户要求）：「每日委托」配置组的项目顺序固定为
+   ① `使用历练点完成每日委托.js`（`notDoublePoints=true`，领奖地区默认「至冬」）
+   ② `AutoCommissionNova.js`。
+   有历练点时第①个脚本在冒险家协会用历练点把委托一键完成并领奖；没有历练点（识别不到就 `warn` 后退出）
+   时第②个脚本接着用跑图 + 战斗把缺的委托做完。
+   同时把 `AutoCommissionNova` 账号配置里的 `checkEncounterPoints` 打开（官方脚本自带的开关：
+   先领历练点奖励，再按「每日委托奖励 n/4」只做还差的那几条）。
+   插件每次跑之前都会重写这个配置组（`lib/bettergi-commission.mjs` 的 `ensureCommissionGroup`），
+   脚本缺失时从官方仓库自动补装。
 
 ### 委托每天轮换 → 配置组要跑两遍（自愈）
 

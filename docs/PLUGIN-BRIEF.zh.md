@@ -150,6 +150,11 @@
   5. 领取尘歌壶奖励
   6. AAA-Artifacts-Bulk-Supply（狗粮批发 JS）
 - **不包含**：每日委托、地脉花、首领/幽境危战、七圣召唤、采集、深渊。
+- **每日委托走前置配置组「每日委托」**（`BetterGI.exe --startGroups 每日委托`），项目顺序固定：
+  ① `使用历练点完成每日委托.js`（历练点优先：`notDoublePoints=true`、领奖地区「至冬」）② `AutoCommissionNova.js`（社区脚本兜底：跑图+战斗）。
+  有历练点就用历练点一键完成并领奖；没有历练点时①会 `warn` 后退出，②接着把缺的委托做完。
+  `AutoCommissionNova` 账号配置的 `checkEncounterPoints` 开着（先领历练点奖励，再按「每日委托奖励 n/4」只做还差的）。
+  插件每次跑前重写该配置组（`lib/bettergi-commission.mjs` 的 `ensureCommissionGroup`），脚本缺失自动从官方仓库补装。
 - 硬前提：原神**可见且前台**、客户区 **16:9 且 ≥1920×1080**；锁屏/黑屏会失败。
 
 ### 崩坏3 / 星穹铁道（engine = skill）

@@ -20,7 +20,7 @@ import { parseM7aLog, m7aReport, resolveM7a, ensurePowerPlan } from '../lib/m7a.
 import { parseBettergiLog, bettergiReport, resolveBettergi } from '../lib/bettergi.mjs';
 import { businessDay, businessDayOfRunId, isPreviousCycle, DEFAULT_RESET_HOUR } from '../lib/dailycycle.mjs';
 import { mergeReport, readDaily, dailySummary, dailyDecision } from '../lib/daily-state.mjs';
-import { ensureCommissionFlows } from '../lib/bettergi-commission.mjs';
+import { ensureCommissionFlows, ensureCommissionGroup } from '../lib/bettergi-commission.mjs';
 import { todayRunStatus, acquireRunLock, runOrder, decodeChildOutput } from '../lib/runner.mjs';
 import { zzzAppSnapshot, collectZzzAppRecords, appFingerprint } from '../lib/zzzrun.mjs';
 import { appendSession } from '../lib/install.mjs';
@@ -442,8 +442,37 @@ check('委托流程自愈', () => {
     if (!catalog.basic.includes('为雪不净')) throw new Error('白名单没补上');
     const account = JSON.parse(fs.readFileSync(path.join(scriptDir, 'Data', 'user-config', '257106739.json'), 'utf8'));
     if (account.settings.skipSafeTeleport !== true) throw new Error('skipSafeTeleport 没打开');
+    if (account.settings.checkEncounterPoints !== true) throw new Error('checkEncounterPoints（历练点优先）没打开');
     if (!account.settings.party.global.battleStrategy) throw new Error('战斗策略没写');
     return `流程/白名单/账号配置补齐 ok（${first.flows} 个委托，${first.accounts} 个账号）`;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+await checkAsync('每日委托配置组（历练点优先 → 脚本兜底）', async () => {  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-group-'));
+  try {
+    // 预置两个脚本目录，避免测试去联网下载
+    for (const name of ['AutoCommissionNova', '使用历练点完成每日委托']) {
+      const dir = path.join(root, 'User', 'JsScript', name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'manifest.json'), '{"name":"x"}', 'utf8');
+    }
+    const result = await ensureCommissionGroup(root, { adventurePath: '至冬' });
+    if (!result.ok) throw new Error(`配置组没写成功：${JSON.stringify(result)}`);
+    const file = path.join(root, 'User', 'ScriptGroup', '每日委托.json');
+    const group = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const names = group.projects.map((p) => p.name);
+    if (names[0] !== '使用历练点完成每日委托.js') throw new Error(`历练点脚本应该在第一个：${names.join(',')}`);
+    if (names[1] !== 'AutoCommissionNova.js') throw new Error(`社区脚本应该在第二个：${names.join(',')}`);
+    if (group.projects[0].jsScriptSettingsObject.notDoublePoints !== true) throw new Error('历练点脚本没开 notDoublePoints');
+    if (group.projects[0].jsScriptSettingsObject.adventurePath !== '至冬') throw new Error('领奖地区没写');
+    // 幂等：再写一次不应该改文件
+    const before = fs.statSync(file).mtimeMs;
+    const again = await ensureCommissionGroup(root, { adventurePath: '至冬' });
+    if (again.changed) throw new Error('已经是目标形态还在改文件');
+    if (fs.statSync(file).mtimeMs !== before) throw new Error('幂等失败：文件被重写了');
+    return `配置组顺序/设置/幂等 ok（${names.join(' → ')}）`;
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

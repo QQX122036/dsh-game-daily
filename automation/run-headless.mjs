@@ -89,6 +89,16 @@ async function main() {
   });
   if (!started.ok) {
     log(stateDir, `start failed: ${started.error}`);
+    // 抢不到锁（同一时间已经有另一轮在跑）：这不是游戏失败，别写 failed 报告去覆盖
+    // 当天已经做好的状态 —— 真正在跑的那一轮会自己出报告。
+    if (started.busy) {
+      notify({
+        stateDir,
+        title: `${game.title} 日常：已在另一轮中`,
+        body: `这一轮没抢到执行权（${started.error}），正在跑的那轮会负责今天。`,
+      });
+      process.exit(0);
+    }
     // 这一轮也要留下痕迹：写一份失败报告 + 弹通知。
     // 否则「抢不到锁/被别的游戏占着」这种失败会**静默蒸发** ——
     // 任务计划器里只有 LastTaskResult=1，面板和历史里什么都没有。

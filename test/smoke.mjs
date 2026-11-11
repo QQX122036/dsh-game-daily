@@ -404,6 +404,28 @@ check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
     if (!zDay.gaps.coffee) throw new Error('真失败的应用该算成缺口');
     if (!zDay.done.email) throw new Error('成功的应用该算完成');
 
+    // 修复前留下的假缺口，后面一轮的 ignored 条目要把它清掉
+    mergeReport(
+      dir,
+      'zzz',
+      {
+        runId: '20261031-120000',
+        status: 'success',
+        startedAt: new Date(2026, 9, 31, 12, 0).toISOString(),
+        steps: [
+          { name: 'coffee', ok: true, detail: '成功' },
+          { name: 'intel_board', ok: false, ignored: true, detail: '上游已知跑不通' },
+          { name: 'notify', ok: false, ignored: true, detail: '上游已知跑不通' },
+        ],
+      },
+      {},
+      { resetHour: 4 },
+    );
+    const zDay2 = readDaily(dir, 'zzz', '20261031', 4);
+    if (zDay2.gaps.intel_board) throw new Error('ignored 的条目该把旧缺口清掉');
+    if (zDay2.gaps.notify) throw new Error('ignored 的条目该把旧缺口清掉');
+    if (zDay2.gaps.coffee) throw new Error('补上的应用不该还挂在缺口里');
+
     // 历史报告按它自己的开始时间归档，不会算到今天。
     // 注意：10-31 00:30 起的这一轮，业务日仍是 10-30（凌晨 4 点才重置）。
     mergeReport(

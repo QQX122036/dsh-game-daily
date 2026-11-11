@@ -282,7 +282,11 @@ export function apply(ctx) {
     for (const game of GAMES) {
       if (!game.canRun) continue;
       const runs = listRuns(env.stateDir, game.id, { limit: 3 });
-      for (const run of runs) {
+      // 合并必须**从旧到新**：listRuns 返回的是新的在前，
+      // 直接合并的话最后一手落地的是最旧那份报告 —— 它当年的失败步骤会把
+      // 新报告里已经修好的状态又覆盖回去（实测绝区零那三个已知坏应用，
+      // 新报告标了 ignored 也没用，旧报告最后落地又把缺口写回来了）。
+      for (const run of runs.slice().reverse()) {
         if (!run.hasReport || !run.summary) continue;
         const meta = readJsonSafe(metaPathOf(env.stateDir, game.id, run.runId)) || {};
         // 检查点补齐：DSH 关着的时候计划任务照样在跑，那些报告也要进当天的清单里。

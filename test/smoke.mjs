@@ -379,6 +379,31 @@ check('每日检查点（完成 / 缺口 / 补跑判定）', () => {
     if (!d3.skip) throw new Error('autoRetry=0 时应跳过');
     if (!d3.gaps.includes('每日奖励')) throw new Error('跳过时也要说清缺口');
 
+    // 引擎标了 ignored 的条目（绝区零那三个上游已知跑不通的应用）：
+    // 不进「完成」也不进「缺口」—— 否则它一失败，当天就永远 partial。
+    mergeReport(
+      dir,
+      'zzz',
+      {
+        runId: '20261031-110000',
+        status: 'partial',
+        startedAt: new Date(2026, 9, 31, 11, 0).toISOString(),
+        steps: [
+          { name: 'email', ok: true, detail: '成功' },
+          { name: 'coffee', ok: false, detail: '点单失败' },
+          { name: 'intel_board', ok: false, ignored: true, detail: '上游已知跑不通' },
+          { name: 'notify', ok: false, ignored: true, detail: '上游已知跑不通' },
+        ],
+      },
+      {},
+      { resetHour: 4 },
+    );
+    const zDay = readDaily(dir, 'zzz', '20261031', 4);
+    if (zDay.gaps.intel_board) throw new Error('ignored 的条目不该算成缺口');
+    if (zDay.gaps.notify) throw new Error('ignored 的条目不该算成缺口');
+    if (!zDay.gaps.coffee) throw new Error('真失败的应用该算成缺口');
+    if (!zDay.done.email) throw new Error('成功的应用该算完成');
+
     // 历史报告按它自己的开始时间归档，不会算到今天。
     // 注意：10-31 00:30 起的这一轮，业务日仍是 10-30（凌晨 4 点才重置）。
     mergeReport(

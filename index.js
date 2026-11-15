@@ -310,6 +310,19 @@ export function apply(ctx) {
               if (gameState && gameState.lastRunId === run.runId) gameState.lastStatus = run.summary.status;
             });
           }
+          // 「最后一次运行」必须指向**最新**那轮。
+          // reconcile 是从旧到新遍历的：旧轮次如果没记账，会走 recordRun 把
+          // lastRunId/lastStatus 写成它自己；而最新那轮已经记过账，直接跳过 ——
+          // 于是「最后一次」停在更早的一轮上（实测 2026-11-15：星铁当天日常成功，
+          // 面板却显示前一天的 failed）。这里按 runId 大小补一次。
+          store.mutate((current) => {
+            const gameState = current.games[game.id];
+            if (!gameState) return;
+            if (String(gameState.lastRunId || '') < String(run.runId)) {
+              gameState.lastRunId = run.runId;
+              gameState.lastStatus = run.summary.status;
+            }
+          });
           // 通知失败（delivered=false）时补发一次；已经弹过的不再重复。
           if (known.delivered !== true) {
             const report = readReport(env.stateDir, game.id, run.runId) || {};

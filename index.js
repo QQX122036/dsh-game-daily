@@ -299,6 +299,16 @@ export function apply(ctx) {
           /* ignore */
         }
         const known = (state.runs[game.id] || []).find((row) => row.runId === run.runId);
+        // 「没能开始这一轮」的运行（撞上另一轮没跑成、启动就挂了）连游戏都没打开，
+        // 不该算一次失败，更不该把面板上的「最后一次运行」顶掉
+        // （实测 2026-11-23：星铁当天日常成功，多出来的那轮失败记录却成了「最后一次」）。
+        let neverStarted = false;
+        try {
+          const report = readReport(env.stateDir, game.id, run.runId) || {};
+          neverStarted = Array.isArray(report.evidence) && report.evidence.includes('start-failed');
+        } catch {
+          /* ignore */
+        }
         if (known) {
           // 报告可能被后写覆盖（子进程先写兜底 failed，直连脚本几分钟后才写真报告）。
           // 以前「已记账就不再管」，于是磁盘上是 partial、面板上永远显示 failed。
@@ -315,14 +325,16 @@ export function apply(ctx) {
           // lastRunId/lastStatus 写成它自己；而最新那轮已经记过账，直接跳过 ——
           // 于是「最后一次」停在更早的一轮上（实测 2026-11-15：星铁当天日常成功，
           // 面板却显示前一天的 failed）。这里按 runId 大小补一次。
-          store.mutate((current) => {
-            const gameState = current.games[game.id];
-            if (!gameState) return;
-            if (String(gameState.lastRunId || '') < String(run.runId)) {
-              gameState.lastRunId = run.runId;
-              gameState.lastStatus = run.summary.status;
-            }
-          });
+          if (!neverStarted) {
+            store.mutate((current) => {
+              const gameState = current.games[game.id];
+              if (!gameState) return;
+              if (String(gameState.lastRunId || '') < String(run.runId)) {
+                gameState.lastRunId = run.runId;
+                gameState.lastStatus = run.summary.status;
+              }
+            });
+          }
           // 通知失败（delivered=false）时补发一次；已经弹过的不再重复。
           if (known.delivered !== true) {
             const report = readReport(env.stateDir, game.id, run.runId) || {};
@@ -331,7 +343,17 @@ export function apply(ctx) {
           continue;
         }
         const summary = summarizeRun(run.runId, meta, { status: run.summary.status, mode: run.summary.mode });
+        const before = { lastRunId: (store.get().games[game.id] || {}).lastRunId, lastStatus: (store.get().games[game.id] || {}).lastStatus };
         store.recordRun(game.id, { ...summary, mode: run.summary.mode || summary.mode });
+        if (neverStarted) {
+          // 这一轮没真正开始过：记账归记账，「最后一次运行」还留在真正跑过的那轮。
+          store.mutate((current) => {
+            const gameState = current.games[game.id];
+            if (!gameState) return;
+            gameState.lastRunId = before.lastRunId || '';
+            gameState.lastStatus = before.lastStatus || '';
+          });
+        }
         done.push({ game, run, summary });
       }
     }

@@ -63,13 +63,23 @@ async function main() {
   // 而且会把工具里「今天已做过」的状态写坏 —— 真正的那一天反而跑不到
   // （今天 00:05 那轮把原神的秘境/合成台用掉了，22:07 那轮直接跳过）。
   // 所以重置时刻之前一律不跑，等当天真正的排班。
+  //
+  // 例外：机器在凌晨才开机时，上一天的日常会被整批漏掉（实测 2026-11-27 三款全被跳过）。
+  // 那一刻离重置只剩几小时，人工补跑要显式开这个开关 ——
+  // DSH_GAME_DAILY_ALLOW_BEFORE_RESET=1。它只放行本轮，不会改「今天已做过」的判定：
+  // 这一轮的报告会按**它开始时的业务日**记账（凌晨 1 点仍算前一天），
+  // 次日 4 点之后的新一轮照常跑，两边不会互相挡住。
   const resetHour = Number(game.dailyResetHour ?? 4);
   const nowHour = new Date().getHours();
-  if (nowHour < resetHour) {
+  const allowBeforeReset = process.env.DSH_GAME_DAILY_ALLOW_BEFORE_RESET === '1';
+  if (nowHour < resetHour && !allowBeforeReset) {
     const note = `还没到今天的日常周期（凌晨 ${resetHour}:00 重置），本轮不跑，等当天正常的排班。`;
     log(stateDir, `skipped before reset: ${note}`);
     notify({ stateDir, title: `${game.title} 日常：未执行`, body: note });
     process.exit(0);
+  }
+  if (nowHour < resetHour) {
+    log(stateDir, `人工补跑：允许在重置前运行（${resetHour}:00 重置，当前 ${nowHour}:00），本轮记在当前业务日`);
   }
 
   const pluginState = readPluginState(stateDir);
